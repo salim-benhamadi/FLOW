@@ -1,0 +1,208 @@
+<?xml version="1.0" encoding="utf-8"?>
+<jobDefinition xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" name="General_job_BE" aggregationLevel="Chip file position" namingEBS="false" inclWafLessOrEqualZero="false" addResultLotsByLotTrack="false" restartOnError="false" addColumnsAsKey="false" inclInvalidTestResults="false" xmlns="http://www.infineon.com/esquarejd">
+  <lotWaferDefinitionList derivedFromMotherlotReq="false">
+    <lotWaferDefinition name="Parametric_Lot_2" isExcluded="false">
+      <lotWaferBlock>
+        <dataSource isExplicit="true">Explicit lot list</dataSource>
+        <ebsInstance scope="GLOBAL" />
+        <filteredAttribute attributeName="Lot">
+          <valueLot lot="[(]Lot[)]" />
+        </filteredAttribute>
+      </lotWaferBlock>
+    </lotWaferDefinition>
+  </lotWaferDefinitionList>
+  <dataDefinitionList>
+    <dataColumnDefinition name="General_col_BE_2">
+      <panel name="FCT BE(BE-style)" includeTimestamps="false" includeSiteInfo="false" lastEntriesOnly="false" entryTimeCondition="">
+        <dataSource>FCT BE(BE-style)</dataSource>
+        <ebsInstance scope="GLOBAL" />
+        <dataColPanelFilter commonFilter="MeasCategory">
+          <filterValue value="*" />
+        </dataColPanelFilter>
+        <dataColPanelFilter commonFilter="MeasCounter">
+          <filterValue value="MAX" />
+        </dataColPanelFilter>
+        <dataColPanelFilter commonFilter="MeasStep">
+          <filterValue value="[(]MeasStep[)]" />
+        </dataColPanelFilter>
+        <dataColPanelFilter commonFilter="MergedFlag">
+          <filterValue value="MERGED" />
+        </dataColPanelFilter>
+        <dataColPanelFilter commonFilter="SubMeasStep">
+          <filterValue value="*" />
+        </dataColPanelFilter>
+        <selectedItemGroup selector="NAME" selectionCategoryGroup="General">
+          <selectedItemSource source="\\e2europe11.intra.infineon.com\eSquare_user\perezbar_eu\eCube\BE_GENERAL_DataColumnDef.txt" sourceType="File" />
+        </selectedItemGroup>
+        <selectedItemGroup selector="NUM" selectionCategoryGroup="HBIN">
+          <selectedItemSource sourceType="None">
+            <selectedItem value="*" volatile="false" />
+          </selectedItemSource>
+        </selectedItemGroup>
+        <selectedItemGroup selector="NUM" selectionCategoryGroup="SBIN">
+          <selectedItemSource sourceType="None">
+            <selectedItem value="*" volatile="false" />
+          </selectedItemSource>
+        </selectedItemGroup>
+        <selectedItemGroup selector="NUM" selectionCategoryGroup="Test">
+          <selectedItemSource sourceType="None">
+            <selectedItem value="[(]TestList[)]" volatile="false" />
+          </selectedItemSource>
+        </selectedItemGroup>
+        <selectedItemGroup selector="NAME" selectionCategoryGroup="ChipAttribute">
+          <selectedItemSource source="\\e2europe11.intra.infineon.com\eSquare_user\perezbar_eu\eCube\BE_CHIPATTRIBUTE_DataColumnDef.txt" sourceType="File" />
+        </selectedItemGroup>
+        <aggregationDefinition>
+          <aggregationDefinitionGroupRetrievalMethod aggregationDefinitionGroup="Headers" currentRetrievalMethod="DescRowNewest" />
+          <aggregationCategoryGroupSelection name="Test">
+            <aggregationDefinitionGroup name="ColumnsDifferentiator">
+              <aggregationDefinitionTypeSelection name="Name" />
+              <aggregationDefinitionTypeSelection name="Num" />
+            </aggregationDefinitionGroup>
+            <aggregationDefinitionGroup name="Headers">
+              <aggregationDefinitionTypeSelection name="Spec" />
+              <aggregationDefinitionTypeSelection name="UNIT" />
+              <aggregationDefinitionTypeSelection name="DF_ORDER" />
+            </aggregationDefinitionGroup>
+            <aggregationDefinitionGroup name="AggregationTypes">
+              <aggregationDefinitionTypeSelection name="base_count" />
+              <aggregationDefinitionTypeSelection name="exec_count" />
+              <aggregationDefinitionTypeSelection name="fail_count" />
+              <aggregationDefinitionTypeSelection name="max" />
+              <aggregationDefinitionTypeSelection name="mean" />
+              <aggregationDefinitionTypeSelection name="median" />
+              <aggregationDefinitionTypeSelection name="min" />
+              <aggregationDefinitionTypeSelection name="q05" />
+              <aggregationDefinitionTypeSelection name="q25" />
+              <aggregationDefinitionTypeSelection name="q75" />
+              <aggregationDefinitionTypeSelection name="q95" />
+              <aggregationDefinitionTypeSelection name="stdev" />
+              <aggregationDefinitionTypeSelection name="q02" />
+              <aggregationDefinitionTypeSelection name="q98" />
+              <aggregationDefinitionTypeSelection name="value" />
+              <aggregationDefinitionTypeSelection name="q01" />
+              <aggregationDefinitionTypeSelection name="q10" />
+              <aggregationDefinitionTypeSelection name="q15" />
+              <aggregationDefinitionTypeSelection name="q85" />
+              <aggregationDefinitionTypeSelection name="q90" />
+              <aggregationDefinitionTypeSelection name="q99" />
+            </aggregationDefinitionGroup>
+          </aggregationCategoryGroupSelection>
+          <aggregationCategoryGroupSelection name="HBIN">
+            <aggregationDefinitionGroup name="ColumnsDifferentiator">
+              <aggregationDefinitionTypeSelection name="Name" />
+              <aggregationDefinitionTypeSelection name="Num" />
+            </aggregationDefinitionGroup>
+            <aggregationDefinitionGroup name="AggregationTypes">
+              <aggregationDefinitionTypeSelection name="count" />
+            </aggregationDefinitionGroup>
+          </aggregationCategoryGroupSelection>
+          <aggregationCategoryGroupSelection name="SBIN">
+            <aggregationDefinitionGroup name="ColumnsDifferentiator">
+              <aggregationDefinitionTypeSelection name="Name" />
+              <aggregationDefinitionTypeSelection name="Num" />
+            </aggregationDefinitionGroup>
+            <aggregationDefinitionGroup name="AggregationTypes">
+              <aggregationDefinitionTypeSelection name="count" />
+            </aggregationDefinitionGroup>
+          </aggregationCategoryGroupSelection>
+          <aggregationCategoryGroupSelection name="ChipAttribute">
+            <aggregationDefinitionGroup name="AggregationTypes">
+              <aggregationDefinitionTypeSelection name="value" />
+            </aggregationDefinitionGroup>
+          </aggregationCategoryGroupSelection>
+        </aggregationDefinition>
+      </panel>
+      <panel name="GLP" includeTimestamps="false" includeSiteInfo="false" lastEntriesOnly="false">
+        <dataSource>GLP</dataSource>
+        <ebsInstance scope="GLOBAL" />
+        <selectedItemGroup selector="None" selectionCategoryGroup="General">
+          <selectedItemSource sourceType="None">
+            <selectedItem value="BasicType" volatile="false" />
+            <selectedItem value="DesignString" volatile="false" />
+            <selectedItem value="Owner" volatile="false" />
+            <selectedItem value="ProductType" volatile="false" />
+            <selectedItem value="SalesName" volatile="false" />
+          </selectedItemSource>
+        </selectedItemGroup>
+      </panel>
+      <panel name="PCRB" includeTimestamps="false" includeSiteInfo="false" lastEntriesOnly="false" entryTimeCondition="">
+        <dataSource>PCRB</dataSource>
+        <ebsInstance scope="GLOBAL" />
+        <dataColPanelFilter commonFilter="PCRB_Number">
+          <filterValue value="*" />
+        </dataColPanelFilter>
+        <selectedItemGroup selector="NAME" selectionCategoryGroup="General">
+          <selectedItemSource sourceType="None">
+            <selectedItem value="SplitGroup" volatile="false" />
+            <selectedItem value="SplitName" volatile="false" />
+          </selectedItemSource>
+        </selectedItemGroup>
+      </panel>
+    </dataColumnDefinition>
+  </dataDefinitionList>
+  <deliveryDefinition>
+    <deliveryFSDefinition basefolder="\\e2europe11.intra.infineon.com\eSquare_user" subfolder="calusera_infineon" foldersuffix="temp\temp - 20210121_134708_89" addDateTimeToFileNames="false" addExtrLevelAsEffNameSuffix="false">
+      <effName>[(]Lot[)]_[(]MeasStep[)]</effName>
+    </deliveryFSDefinition>
+  </deliveryDefinition>
+  <archiveDefinition basefolder="\\e2europe11.intra.infineon.com\eSquare_user" subfolder="calusera_infineon" foldersuffix="temp\temp - 20210121_134708_89" />
+  <formattingDefinitionList showDataRowEvenIfDataColsEmpty="false" enableEmptyColumn="false">
+    <specialDieFilter isActivated="false">
+      <argument name="SpecialDieSelectionRuleFile" isActivated="true" />
+    </specialDieFilter>
+    <synonymList isActivated="false">
+      <argument name="SynonymListRuleFile" isActivated="true" />
+    </synonymList>
+    <dataColumnFilter isActivated="false">
+      <argument name="DataColumnFilterRuleFile" isActivated="true" />
+    </dataColumnFilter>
+    <colKey2Rows isActivated="true">
+      <argument name="ColKeyToRowXml" isActivated="true">
+        <value>&lt;?xml version="1.0" encoding="utf-8"?&gt;
+          &lt;RulesList&gt;
+          &lt;ColKey2Rows IgnoreNullValues="true" Activated="true" SimpleMode="false"&gt;
+          &lt;KeyDescriptionRows&gt;
+          &lt;Row Name="+MeasStep" /&gt;
+          &lt;/KeyDescriptionRows&gt;
+          &lt;Ignore&gt;
+          &lt;Row Name="+EFF:1.00" /&gt;
+          &lt;/Ignore&gt;
+          &lt;/ColKey2Rows&gt;
+          &lt;/RulesList&gt;</value>
+        <CDATA><![CDATA[<?xml version="1.0" encoding="utf-8"?>
+          <RulesList>
+          <ColKey2Rows IgnoreNullValues="true" Activated="true" SimpleMode="false">
+          <KeyDescriptionRows>
+          <Row Name="+MeasStep" />
+          </KeyDescriptionRows>
+          <Ignore>
+          <Row Name="+EFF:1.00" />
+          </Ignore>
+          </ColKey2Rows>
+          </RulesList>]]></CDATA>
+      </argument>
+    </colKey2Rows>
+  </formattingDefinitionList>
+  <workFlowMetaData>
+    <value name="AggregationLevel">Chip file position</value>
+    <value name="UsedLotWaferDefinitions">Parametric_Lot_2</value>
+    <value name="UsedDataColumnDefinitions">General_col_BE_2</value>
+    <value name="JobDefinitionDescription" />
+    <value name="EffName">[(]Lot[)]_[(]MeasStep[)]</value>
+    <value name="PpLocation">None</value>
+    <value name="JobDefinitionSavedTime">2021-01-21T11:45Z</value>
+    <value name="JobDefinitionSerializedTime">2021-01-21T11:58Z</value>
+    <value name="ArchiveDirectoryBaseLocation">\\e2europe11.intra.infineon.com\eSquare_user\calusera_infineon\temp\temp - 20210121_134708_89</value>
+  </workFlowMetaData>
+  <XMLMetaData E2XMLversion="2.1.0.0" E2Clientversion="2.8.5.2" E2Clientname="eSquare Main Application" E2Repositoryversion="2.1.0.0" />
+  <history>
+    <value name="ExportingUser" timestamp="2021-01-21T11:58Z">infineon\calusera</value>
+    <value name="OwningUser" timestamp="2021-01-21T11:58Z">infineon\calusera</value>
+    <value name="JobDefinitionLocation" timestamp="2021-01-21T11:58Z" />
+    <value name="JobDefinitionID" timestamp="2021-01-21T11:58Z">1428862966</value>
+    <value name="JobDefinitionName" timestamp="2021-01-21T11:58Z">General_job_BE</value>
+    <value name="LastModifiedTimestampLw" timestamp="2021-01-21T11:58Z">1/1/0001 12:00:00 AM</value>
+    <value name="LogMessage" timestamp="2021-01-21T11:58Z">This job definition 'General_job_BE' was exported by calusera_infineon</value>
+  </history>
+</jobDefinition>

@@ -1,0 +1,69 @@
+# Virtual Environment
+env
+venv
+
+# Node modules
+node_modules
+
+# Python cache directories - explicit paths
+__pycache__
+__pycache__
+config/lot-extraction-logs
+frontend/output
+frontend/resources
+frontend/__pycache__
+backend/__pycache__
+frontend/api/__pycache__
+frontend/ui/__pycache__
+frontend/ui/utils/__pycache__
+frontend/ui/views/__pycache__
+frontend/ui/widgets/__pycache__
+backend/api/__pycache__
+backend/api/v1/__pycache__
+backend/api/v1/routers/__pycache__
+backend/core/__pycache__
+backend/db/__pycache__
+backend/db/migrations/__pycache__
+backend/services/__pycache__
+backend/tests/__pycache__
+backend/utils/__pycache__
+backend/models/__pycache__
+backend/api/migrations/__pycache__
+
+# Python compiled files
+*.pyc
+*.pyo
+*.pyd
+*.cpython-312.pyc
+.Python
+__pycache__
+*.py[cod]
+*$py.class
+
+# Project specific
+config/lot-extraction-logs/
+*.log
+
+# Build directories
+dist/
+build/
+*.egg-info/
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# IDE specific files
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Backup files
+*.bak
+*.tmp
+*.old
+*.orig
