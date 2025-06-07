@@ -16,9 +16,9 @@ class Settings(BaseSettings):
     API_PREFIX: str = "/api/v1"
     
     # Model settings
-    MODEL_PATH: str = "/app/backend/models/lightgbm_model.txt"
-    REFERENCE_DATA_PATH: str = "/app/data/reference_data.eff"
-    CONFIDENCE_THRESHOLD: float = 0.95
+    MODEL_PATH: str = os.getenv("MODEL_PATH", "./backend/models/lightgbm_model.txt")
+    REFERENCE_DATA_PATH: str = os.getenv("REFERENCE_DATA_PATH", "/data/reference_data.eff")
+    CONFIDENCE_THRESHOLD: float = os.getenv("CONFIDENCE_THRESHOLD", 0.95)
     MODEL_VERSION: str = "1.0.0"
     
     # Database settings - will be overridden by environment variables
