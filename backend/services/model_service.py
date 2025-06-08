@@ -4,7 +4,7 @@ from typing import List, Dict, Any
 import lightgbm as lgb
 from backend.db.database import DatabaseConnection
 from backend.core.config import get_settings
-from effio import EFF
+from backend.services.effio_service import EFF
 
 class ModelService:
     def __init__(self):

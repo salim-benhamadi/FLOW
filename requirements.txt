@@ -4,7 +4,6 @@ click==8.2.1
 colorama==0.4.6
 contourpy==1.3.2
 cycler==0.12.1
-effio @ git+https://bitbucket.vih.infineon.com/scm/~benhamadi/effio.git@d30faac0f6c0c17115e3a3bc09b20a0e4733eb67
 et_xmlfile==2.0.0
 fastapi==0.115.12
 fonttools==4.58.2
