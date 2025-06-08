@@ -153,7 +153,7 @@ class SettingPage(QWidget):
         self.shadow.setXOffset(0)
         self.shadow.setYOffset(0)
         self.core_model_combo.setGraphicsEffect(self.shadow)
-        self.core_model_combo.setStyleSheet("border: 1px solid #9095A1; padding: 10px; border-radius: 4px; box-shadow: none;")
+        self.core_model_combo.setStyleSheet("border: 1px solid #9095A1; padding: 10px; border-radius: 4px;")
         coreModelLayout.addWidget(self.core_model_combo)
 
         coreModelContainer = QWidget()

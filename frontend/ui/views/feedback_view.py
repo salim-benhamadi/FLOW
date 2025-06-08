@@ -19,8 +19,6 @@ class FeedbackMetricWidget(QFrame):
                 background-color: #ffffff;
                 border-radius: 16px;
                 border: 1px solid #e5e7eb;
-                box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 
-                           0 2px 4px -1px rgba(0, 0, 0, 0.06);
                 min-width: 150px;
             }
         """)
