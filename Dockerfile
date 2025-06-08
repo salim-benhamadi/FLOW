@@ -1,5 +1,5 @@
 # Use the latest Python version
-FROM python:slim
+FROM python:latest
 
 # Set working directory
 WORKDIR /app
