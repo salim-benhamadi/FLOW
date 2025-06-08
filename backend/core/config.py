@@ -2,6 +2,10 @@ from pydantic_settings import BaseSettings
 from typing import List, Dict
 from functools import lru_cache
 import os
+from pathlib import Path
+
+# Get the project root directory (assuming config.py is in backend/core/)
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
 class Settings(BaseSettings):
     # App settings
@@ -15,10 +19,10 @@ class Settings(BaseSettings):
     CORS_ORIGINS: List[str] = ["*"]  
     API_PREFIX: str = "/api/v1"
     
-    # Model settings
-    MODEL_PATH: str = os.getenv("MODEL_PATH", "./backend/models/lightgbm_model.txt")
-    REFERENCE_DATA_PATH: str = os.getenv("REFERENCE_DATA_PATH", "/data/reference_data.eff")
-    CONFIDENCE_THRESHOLD: float = os.getenv("CONFIDENCE_THRESHOLD", 0.95)
+    # Model settings - Use absolute paths resolved from project root
+    MODEL_PATH: str = os.getenv("MODEL_PATH", str(PROJECT_ROOT / "backend" / "models" / "lightgbm_model.txt"))
+    REFERENCE_DATA_PATH: str = os.getenv("REFERENCE_DATA_PATH", str(PROJECT_ROOT / "backend" / "data" / "reference_data.eff"))
+    CONFIDENCE_THRESHOLD: float = float(os.getenv("CONFIDENCE_THRESHOLD", "0.95"))
     MODEL_VERSION: str = "1.0.0"
     
     # Database settings - will be overridden by environment variables
@@ -36,6 +40,10 @@ class Settings(BaseSettings):
         """Get SQLAlchemy database URL"""
         ssl_param = f"?sslmode={self.DATABASE_SSL_MODE}" if self.DATABASE_SSL_MODE != "disable" else ""
         return f"postgresql://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}{ssl_param}"
+    
+    class Config:
+        env_file = ".env"
+        env_file_encoding = "utf-8"
 
 @lru_cache()
 def get_settings():
