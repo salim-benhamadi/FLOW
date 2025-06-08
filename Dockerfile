@@ -1,5 +1,5 @@
-# Use a more accessible Python base image
-FROM python:3.11-slim
+# Use the latest Python version
+FROM python:slim
 
 # Set working directory
 WORKDIR /app
