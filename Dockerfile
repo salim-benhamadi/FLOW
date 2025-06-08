@@ -7,15 +7,6 @@ USER root
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies using microdnf (UBI package manager)
-RUN microdnf update -y && \
-    microdnf install -y \
-        gcc \
-        gcc-c++ \
-        postgresql-devel \
-        curl \
-    && microdnf clean all
-
 # Upgrade pip to latest version
 RUN pip install --upgrade pip
 
