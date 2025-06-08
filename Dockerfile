@@ -1,5 +1,5 @@
 # Use the latest Python version
-FROM python:latest
+FROM python:3.11-alpine
 
 # Set working directory
 WORKDIR /app
