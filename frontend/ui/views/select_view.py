@@ -3,14 +3,15 @@ from PySide6.QtWidgets import (QApplication, QWidget, QLabel, QVBoxLayout, QHBox
                              QListWidget, QListWidgetItem)
 from PySide6.QtGui import QFont, QIcon, QColor
 from PySide6.QtCore import Qt, QSize, Signal, QThread
-from effio import EFF
+from ui.utils.PathResources import resource_path
+from ui.utils.Effio import EFF
 class LoadItemsWorker(QThread):
     finished = Signal(dict)
     
     def __init__(self, files):
         super().__init__()
         self.files = files
-        
+        print(self.files)
     def run(self):
         VAMOS_TEST = {
             "VAMOS_PU": [6000, 6999],
@@ -144,7 +145,7 @@ class SelectionPage(QWidget):
         self.searchBox.textChanged.connect(self.filter_items)
         
         searchIcon = QToolButton()
-        searchIcon.setIcon(QIcon("./src/frontend/resources/icons/search.png"))
+        searchIcon.setIcon(QIcon(resource_path("./resources/icons/search.png")))
         searchIcon.setIconSize(QSize(30, 30))
         searchIcon.setStyleSheet("background: transparent; border: none;")
         

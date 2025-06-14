@@ -8,6 +8,7 @@ from ui.widgets.FilterDialog import FilterDialog, apply_filter
 from ui.widgets.PlotDialog import PlotDialog
 from ui.widgets.FeedbackDialog import FeedbackDialog
 from ui.widgets.ConfigurationDialog import ConfigurationDialog
+from ui.utils.PathResources import resource_path
 from api.feedback_client import FeedbackClient
 from api.input_client import InputClient
 from PySide6.QtCore import Signal
@@ -180,7 +181,7 @@ class ResultPage(QWidget):
         self.searchBox.textChanged.connect(self.searchTable)
         
         searchIcon = QToolButton()
-        searchIcon.setIcon(QIcon("./src/frontend/resources/icons/search.png"))
+        searchIcon.setIcon(QIcon(resource_path("./resources/icons/search.png")))
         searchIcon.setIconSize(QSize(30, 30))
         searchIcon.setStyleSheet("background: transparent; border: none; margin: 0")
         
@@ -188,7 +189,7 @@ class ResultPage(QWidget):
         searchContainerLayout.addWidget(searchIcon)
         
         filterIcon = QToolButton()
-        filterIcon.setIcon(QIcon("./src/frontend/resources/icons/filter.png"))
+        filterIcon.setIcon(QIcon(resource_path("./resources/icons/filter.png")))
         filterIcon.setIconSize(QSize(30, 30))
         filterIcon.setStyleSheet("background: transparent; border: none; margin: 0")
         filterIcon.clicked.connect(self.filterTable)
@@ -354,13 +355,13 @@ class ResultPage(QWidget):
         action_layout.setContentsMargins(2, 2, 2, 2)
         
         viz_button = QToolButton()
-        viz_button.setIcon(QIcon("./src/frontend/resources/icons/Plot.png"))
+        viz_button.setIcon(QIcon(resource_path("./resources/icons/Plot.png")))
         viz_button.setIconSize(QSize(40, 40))
         viz_button.setToolTip("Visualize")
         viz_button.clicked.connect(lambda checked, r=row_idx: self.showPlot(r))
         
         edit_button = QToolButton()
-        edit_button.setIcon(QIcon("./src/frontend/resources/icons/edit.png"))
+        edit_button.setIcon(QIcon(resource_path("./resources/icons/edit.png")))
         edit_button.setIconSize(QSize(40, 40))
         edit_button.clicked.connect(lambda _, r=row_idx: self.editRow(r))
         

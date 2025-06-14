@@ -1,6 +1,6 @@
 import xml.etree.ElementTree as ET
 from datetime import datetime
-from effio import EFF
+from ui.utils.Effio import EFF
 import numpy as np
 import pandas as pd
 from typing import List, Dict, Tuple

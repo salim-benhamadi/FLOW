@@ -3,7 +3,7 @@ from PySide6.QtWidgets import (QLabel, QVBoxLayout, QHBoxLayout, QLineEdit,
                              QScrollArea, QWidget, QFrame)
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont, QIcon
-
+from ui.utils.PathResources import resource_path
 class FilterCondition(QFrame):
     removed = Signal(object)
     
@@ -65,7 +65,7 @@ class FilterCondition(QFrame):
         self.valueEdit.setMinimumWidth(200)
         
         self.removeButton = QPushButton()
-        self.removeButton.setIcon(QIcon('./src/frontend/resources/icons/remove.png'))
+        self.removeButton.setIcon(QIcon(resource_path('./resources/icons/remove.png')))
         self.removeButton.setFixedSize(28, 28)
         self.removeButton.setStyleSheet("""
             QPushButton {
@@ -209,6 +209,23 @@ class FilterDialog(QDialog):
         return [condition.get_filter_values() for condition in self.conditions]
 
 def apply_filter(table, filter_conditions):
+    def is_nan_value(value):
+        """Check if a value represents NaN/null/empty"""
+        if not value or value.strip() == '':
+            return True
+        value_lower = value.strip().lower()
+        return value_lower in ['nan', 'null', 'none', 'n/a', '#n/a', '#null!', '#div/0!']
+    
+    def is_numeric_value(value):
+        """Check if a value can be converted to a number and is not NaN"""
+        if is_nan_value(value):
+            return False
+        try:
+            num = float(value.strip())
+            return not (num != num)  # Check for float('nan')
+        except (ValueError, TypeError):
+            return False
+    
     for row in range(table.rowCount()):
         should_show = True
         
@@ -242,6 +259,27 @@ def apply_filter(table, filter_conditions):
             cell_value = item.text().strip()
             filter_value = filter_value.strip()
             
+            # Handle NaN values - exclude them from numeric comparisons
+            if is_nan_value(cell_value):
+                if operator in ['greater than', 'less than']:
+                    should_show = False
+                    break
+                elif operator == 'equals':
+                    # Only show NaN values if explicitly filtering for them
+                    if not is_nan_value(filter_value):
+                        should_show = False
+                        break
+                elif operator == 'not equals':
+                    # NaN values should be shown only if not filtering for NaN
+                    if is_nan_value(filter_value):
+                        should_show = False
+                        break
+                elif operator in ['contains', 'starts with', 'ends with']:
+                    # NaN values don't contain/start with/end with anything meaningful
+                    should_show = False
+                    break
+                continue
+            
             try:
                 if operator == 'contains':
                     if filter_value.lower() not in cell_value.lower():
@@ -260,21 +298,29 @@ def apply_filter(table, filter_conditions):
                         should_show = False
                         break
                 elif operator == 'greater than':
-                    try:
+                    if is_numeric_value(cell_value) and is_numeric_value(filter_value):
                         if float(cell_value) <= float(filter_value):
                             should_show = False
                             break
-                    except ValueError:
-                        if cell_value <= filter_value:
+                    else:
+                        # For non-numeric comparisons, exclude if cell_value is not numeric
+                        if not is_numeric_value(cell_value):
+                            should_show = False
+                            break
+                        elif cell_value <= filter_value:
                             should_show = False
                             break
                 elif operator == 'less than':
-                    try:
+                    if is_numeric_value(cell_value) and is_numeric_value(filter_value):
                         if float(cell_value) >= float(filter_value):
                             should_show = False
                             break
-                    except ValueError:
-                        if cell_value >= filter_value:
+                    else:
+                        # For non-numeric comparisons, exclude if cell_value is not numeric
+                        if not is_numeric_value(cell_value):
+                            should_show = False
+                            break
+                        elif cell_value >= filter_value:
                             should_show = False
                             break
                 elif operator == 'not equals':
@@ -283,6 +329,8 @@ def apply_filter(table, filter_conditions):
                         break
             except Exception as e:
                 print(f"Error applying filter: {str(e)}")
-                continue
+                # On error, hide the row to be safe
+                should_show = False
+                break
         
         table.setRowHidden(row, not should_show)

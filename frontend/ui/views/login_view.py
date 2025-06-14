@@ -2,6 +2,7 @@ from PySide6.QtWidgets import (QWidget, QLabel, QVBoxLayout, QHBoxLayout, QPushB
                                QLineEdit, QFrame, QMessageBox)
 from PySide6.QtGui import QPixmap, QFont
 from PySide6.QtCore import Qt, Signal
+from ui.utils.PathResources import resource_path
 
 class LoginPage(QWidget):
     show_upload_signal = Signal()
@@ -84,7 +85,7 @@ class LoginPage(QWidget):
         
         # Logo
         logoLabel = QLabel()
-        logoPixmap = QPixmap('./src/frontend/resources/icons/SUPERVISOR.png')
+        logoPixmap = QPixmap(resource_path('./resources/icons/SUPERVISOR.png'))
         logoPixmap = logoPixmap.scaled(200, 200, Qt.KeepAspectRatio, Qt.SmoothTransformation)
         logoLabel.setPixmap(logoPixmap)
         logoLabel.setAlignment(Qt.AlignCenter)

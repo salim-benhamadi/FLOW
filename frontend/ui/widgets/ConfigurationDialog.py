@@ -44,6 +44,22 @@ class ConfigurationDialog(QDialog):
         # Create checkboxes
         for column in sorted_columns:
             checkbox = QCheckBox(column)
+            checkbox.setStyleSheet("""
+                QCheckBox {
+                    border : none;
+                    margin-bottom : 10px;
+                    }
+                QCheckBox::indicator {
+                    width: 15px;
+                    height: 15px;
+                    border: 1px solid #DADEE8;
+                    border-radius: 5px;
+                    background-color: white; 
+                }
+                QCheckBox::indicator:checked {
+                    background-color: #1849D6;
+                }
+            """)
             if column in self.default_columns:
                 checkbox.setChecked(True)
                 checkbox.setEnabled(False)

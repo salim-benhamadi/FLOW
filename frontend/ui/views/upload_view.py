@@ -1,19 +1,114 @@
 from PySide6.QtWidgets import (QWidget, QLabel, QVBoxLayout, QHBoxLayout, QPushButton, QLineEdit,
-                               QFileDialog, QFrame, QScrollArea, QMessageBox, QGroupBox)
-from PySide6.QtGui import QPixmap, QFont, QDragEnterEvent, QDropEvent
+                               QFileDialog, QFrame, QScrollArea, QMessageBox, QGroupBox, QComboBox)
+from PySide6.QtGui import QPixmap, QFont, QDragEnterEvent, QDropEvent, QIcon
 from PySide6.QtCore import Qt, Signal
 from typing import List, Dict
 import os
-from ui.utils.EFFExtractor import EFFExtractor
+import zipfile
+import tempfile
+from ui.utils.EFFExtractor import EFFExtractor, ExtractorType
 from ui.utils.ExtractionWorker import ExtractionWorker
+from ui.utils.EFFValidator import EFFValidator
+from ui.utils.PathResources import resource_path
 
-class ExtractionType:
-    BACKEND = "BE"
-    FRONTEND = "FE"
+class LotInputWithInsertion(QWidget):
+    deleted = Signal(object)
+    
+    def __init__(self, delete_icon_path, is_frontend=False):
+        super().__init__()
+        self.is_frontend = is_frontend
+        self.delete_icon_path = delete_icon_path
+        self.insertion_inputs = []
+        self.initUI()
+    
+    def initUI(self):
+        mainLayout = QVBoxLayout(self)
+        mainLayout.setContentsMargins(0, 5, 0, 5)
+        
+        firstRowLayout = QHBoxLayout()
+        
+        self.input = QLineEdit()
+        self.input.setPlaceholderText('Lot Number')
+        self.input.setStyleSheet("border-radius: 5px; background-color: #F0F0F0; min-height: 30px; padding: 5px;")
+        firstRowLayout.addWidget(self.input)
+        
+        if self.is_frontend:
+            self.wafer_input = QLineEdit()
+            self.wafer_input.setPlaceholderText('Wafer')
+            self.wafer_input.setStyleSheet("border-radius: 5px; background-color: #F0F0F0; min-height: 30px; padding: 5px;")
+            firstRowLayout.addWidget(self.wafer_input)
+        
+        self.deleteBtn = QPushButton()
+        self.deleteBtn.setIcon(QIcon(self.delete_icon_path))
+        self.deleteBtn.setFixedSize(30, 30)
+        self.deleteBtn.setStyleSheet("QPushButton { border: none; } QPushButton:hover { background-color: #f0f0f0; }")
+        self.deleteBtn.clicked.connect(lambda: self.deleted.emit(self))
+        firstRowLayout.addWidget(self.deleteBtn)
+        
+        mainLayout.addLayout(firstRowLayout)
+        
+        insertionLabel = QLabel("Insertion Modes:")
+        insertionLabel.setFont(QFont("Arial", 9))
+        insertionLabel.setStyleSheet("margin-top: 5px; margin-bottom: 5px;")
+        mainLayout.addWidget(insertionLabel)
+        
+        self.insertionLayout = QVBoxLayout()
+        mainLayout.addLayout(self.insertionLayout)
+        
+        self.addInsertionBtn = QPushButton("Add Insertion")
+        self.addInsertionBtn.setStyleSheet("QPushButton { color: #1849D6; border: none; text-align: left; }")
+        self.addInsertionBtn.clicked.connect(self.add_insertion)
+        mainLayout.addWidget(self.addInsertionBtn)
+        
+        self.add_insertion()
+    
+    def add_insertion(self):
+        insertionWidget = QWidget()
+        insertionLayout = QHBoxLayout(insertionWidget)
+        insertionLayout.setContentsMargins(0, 0, 0, 0)
+        insertionLayout.setSpacing(5)
+        
+        insertionInput = QLineEdit()
+        insertionInput.setPlaceholderText(f'Insertion {len(self.insertion_inputs) + 1}')
+        insertionInput.setStyleSheet("border-radius: 5px; background-color: #F0F0F0; min-height: 25px; padding: 3px;")
+        
+        removeBtn = QPushButton("Remove")
+        removeBtn.setFixedSize(60, 25)
+        removeBtn.setStyleSheet("QPushButton { background-color: #FF4444; color: white; border-radius: 3px; }")
+        removeBtn.clicked.connect(lambda: self.remove_insertion(insertionWidget, insertionInput))
+        
+        insertionLayout.addWidget(insertionInput)
+        insertionLayout.addWidget(removeBtn)
+        
+        self.insertionLayout.addWidget(insertionWidget)
+        self.insertion_inputs.append(insertionInput)
+        
+        self.update_remove_buttons()
+    
+    def remove_insertion(self, widget, input_field):
+        if len(self.insertion_inputs) > 1:
+            self.insertion_inputs.remove(input_field)
+            widget.deleteLater()
+            self.update_remove_buttons()
+    
+    def update_remove_buttons(self):
+        for i, widget in enumerate(self.insertionLayout.parentWidget().findChildren(QWidget)):
+            if hasattr(widget, 'layout') and widget.layout():
+                remove_btn = None
+                for j in range(widget.layout().count()):
+                    item = widget.layout().itemAt(j)
+                    if item and isinstance(item.widget(), QPushButton) and item.widget().text() == "Remove":
+                        remove_btn = item.widget()
+                        break
+                if remove_btn:
+                    remove_btn.setVisible(len(self.insertion_inputs) > 1)
+    
+    def get_insertions(self):
+        return [inp.text().strip() for inp in self.insertion_inputs if inp.text().strip()]
 
 class UploadPage(QWidget):
     show_setting_signal = Signal()
-    show_selection_signal = Signal(list)
+    show_selection_signal = Signal(list) 
     show_admin_login_signal = Signal()
 
     def __init__(self):
@@ -21,21 +116,56 @@ class UploadPage(QWidget):
         self.uploaded_files = []
         self.progress_widgets = {}
         self.active_workers = []
-        self.extractor = EFFExtractor()
+        self.current_extraction_index = 0
+        self.chips_to_process = []
+        self.lot_inputs = []
+        self.extracted_files = []
+        
+        self.upload_dir = os.path.dirname(os.path.dirname(__file__))
+        self.output_dir = resource_path(os.path.join('./resources/output'))
+        self.temp_dir = tempfile.mkdtemp()
+        self.add_icon = resource_path(os.path.join('./resources/icons', 'add.png'))
+        self.delete_icon = resource_path(os.path.join('./resources/icons', 'delete.png'))
+        self.substruct_icon = resource_path(os.path.join('./resources/icons', 'substruct.png'))
+        
+        self.extractors = {
+            'backend': EFFExtractor(ExtractorType.BACKEND),
+            'frontend': EFFExtractor(ExtractorType.FRONTEND)
+        }
+        
         self.initUI()
 
     def initUI(self):
         self.setFixedWidth(480)
         self.setMinimumHeight(700)
+        
         mainLayout = QVBoxLayout(self)
+        mainLayout.setContentsMargins(0, 0, 0, 0)
+        
         self.setupHeaderSection(mainLayout)
-        self.setupDragDropSection(mainLayout)
-        self.setupSeparator(mainLayout)
-        self.setupExtractionSection(mainLayout)
-        self.setupFileListSection(mainLayout)
-        mainLayout.setContentsMargins(40, 40, 40, 40)
+        
+        scrollArea = QScrollArea()
+        scrollArea.setWidgetResizable(True)
+        scrollArea.setStyleSheet("QScrollArea { border: none; }")
+        
+        scrollContent = QWidget()
+        scrollLayout = QVBoxLayout(scrollContent)
+        scrollLayout.setContentsMargins(40, 20, 40, 40)
+        
+        self.setupDragDropSection(scrollLayout)
+        self.setupSeparator(scrollLayout)
+        self.setupLotBasedSection(scrollLayout)
+        self.setupFileListSection(scrollLayout)
+        
+        scrollArea.setWidget(scrollContent)
+        mainLayout.addWidget(scrollArea)
 
     def setupHeaderSection(self, mainLayout):
+        headerWidget = QWidget()
+        headerWidget.setFixedHeight(80)
+        headerLayout = QVBoxLayout(headerWidget)
+        headerLayout.setContentsMargins(40, 20, 40, 0)
+        
         row1 = QHBoxLayout()
         titleLayout = QVBoxLayout()
         
@@ -97,7 +227,9 @@ class UploadPage(QWidget):
         row1.addWidget(self.adminButton, alignment=Qt.AlignRight)
         row1.addWidget(self.settingButton, alignment=Qt.AlignRight)
         row1.setContentsMargins(0,0,0,20)
-        mainLayout.addLayout(row1)
+        headerLayout.addLayout(row1)
+        
+        mainLayout.addWidget(headerWidget)
 
     def setupDragDropSection(self, mainLayout):
         self.dragDropSection = QLabel()
@@ -112,7 +244,7 @@ class UploadPage(QWidget):
         dragDropLayout = QVBoxLayout(self.dragDropSection)
         
         uploadIcon = QLabel()
-        iconPixmap = QPixmap('./src/frontend/resources/icons/upload.png')
+        iconPixmap = QPixmap(resource_path('./resources/icons/upload.png'))
         iconPixmap = iconPixmap.scaled(30, 30, Qt.KeepAspectRatio, Qt.SmoothTransformation)
         uploadIcon.setPixmap(iconPixmap)
         uploadIcon.setStyleSheet("border : none")
@@ -155,11 +287,48 @@ class UploadPage(QWidget):
         
         mainLayout.addLayout(sepearatorLayout)
 
-    def setupExtractionSection(self, mainLayout):
-        ebsTitle = QLabel('Upload from EBS')
-        ebsTitle.setFont(QFont("Arial", 12, QFont.Bold))
+    def setupLotBasedSection(self, mainLayout):
+        lotNumbersSection = QVBoxLayout()
+        lotHeaderLayout = QHBoxLayout()
+        lotLabel = QLabel("Lot Numbers")
+        lotLabel.setFont(QFont("Arial", 10, QFont.Bold))
         
-        # Extract button
+        self.addBackendLotButton = QPushButton("Add Backend Lot")
+        self.addBackendLotButton.setIcon(QIcon(self.add_icon))
+        self.addBackendLotButton.setFixedSize(120, 30)
+        self.addBackendLotButton.setStyleSheet("""
+            QPushButton { 
+                border: none;
+                color: #1849D6;
+                text-align: left;
+                padding-left: 5px;
+            }
+        """)
+        self.addBackendLotButton.clicked.connect(lambda: self.add_lot_field(False))
+
+        self.addFrontendLotButton = QPushButton("Add Frontend Lot")
+        self.addFrontendLotButton.setIcon(QIcon(self.add_icon))
+        self.addFrontendLotButton.setFixedSize(120, 30)
+        self.addFrontendLotButton.setStyleSheet("""
+            QPushButton { 
+                border: none;
+                color: #1849D6;
+                text-align: left;
+                padding-left: 5px;
+            }
+        """)
+        self.addFrontendLotButton.clicked.connect(lambda: self.add_lot_field(True))
+
+        lotHeaderLayout.addWidget(lotLabel)
+        lotHeaderLayout.addStretch()
+        lotHeaderLayout.addWidget(self.addBackendLotButton)
+        lotHeaderLayout.addWidget(self.addFrontendLotButton)
+        lotNumbersSection.addLayout(lotHeaderLayout)
+        
+        self.lotFieldsLayout = QVBoxLayout()
+        lotNumbersSection.addLayout(self.lotFieldsLayout)
+        mainLayout.addLayout(lotNumbersSection)
+
         self.extractButton = QPushButton('Extract')
         self.extractButton.setStyleSheet("""
             QPushButton {
@@ -168,6 +337,7 @@ class UploadPage(QWidget):
                 border-radius: 5px;
                 padding: 5px 15px;
                 min-width: 40px;
+                margin-top: 20px;
             }
             QPushButton:disabled {
                 background-color: grey;
@@ -175,95 +345,8 @@ class UploadPage(QWidget):
         """)
         self.extractButton.setEnabled(False)
         self.extractButton.clicked.connect(self.start_extraction)
-        
-        # Title row with extract button
-        titleRow = QHBoxLayout()
-        titleRow.addWidget(ebsTitle)
-        titleRow.addStretch()
-        titleRow.addWidget(self.extractButton)
-        mainLayout.addLayout(titleRow)
+        mainLayout.addWidget(self.extractButton)
 
-        # BE Lot Input
-        beLotLayout = QVBoxLayout()
-        beLotLabel = QLabel('Backend lot number')
-        self.beLotInput = QLineEdit()
-        self.beLotInput.setPlaceholderText('Ex: ZA301387803')
-        self.beLotInput.textChanged.connect(self.validate_inputs)
-        self.beLotInput.setStyleSheet("""
-            QLineEdit {
-                border-radius: 5px;
-                background-color: #F0F0F0;
-                min-height: 30px;
-                padding: 5px;
-            }
-        """)
-        beLotLayout.addWidget(beLotLabel)
-        beLotLayout.addWidget(self.beLotInput)
-
-        # BE Insertion Input
-        beInsertionLayout = QVBoxLayout()
-        beInsertionLabel = QLabel('Backend insertion mode')
-        self.beInsertionInput = QLineEdit()
-        self.beInsertionInput.setPlaceholderText('B1,B2,B3')
-        self.beInsertionInput.textChanged.connect(self.validate_inputs)
-        self.beInsertionInput.setStyleSheet("""
-            QLineEdit {
-                border-radius: 5px;
-                background-color: #F0F0F0;
-                min-height: 30px;
-                padding: 5px;
-            }
-        """)
-        beInsertionLayout.addWidget(beInsertionLabel)
-        beInsertionLayout.addWidget(self.beInsertionInput)
-
-        # BE Input Row
-        beInputRow = QHBoxLayout()
-        beInputRow.addLayout(beLotLayout)
-        beInputRow.addLayout(beInsertionLayout)
-        mainLayout.addLayout(beInputRow)
-
-        # FE Lot Input
-        feLotLayout = QVBoxLayout()
-        feLotLabel = QLabel('Frontend lot number')
-        self.feLotInput = QLineEdit()
-        self.feLotInput.setPlaceholderText('Ex: ZA301387803')
-        self.feLotInput.textChanged.connect(self.validate_inputs)
-        self.feLotInput.setStyleSheet("""
-            QLineEdit {
-                border-radius: 5px;
-                background-color: #F0F0F0;
-                min-height: 30px;
-                padding: 5px;
-            }
-        """)
-        feLotLayout.addWidget(feLotLabel)
-        feLotLayout.addWidget(self.feLotInput)
-
-        # FE Insertion Input
-        feInsertionLayout = QVBoxLayout()
-        feInsertionLabel = QLabel('Frontend insertion mode')
-        self.feInsertionInput = QLineEdit()
-        self.feInsertionInput.setPlaceholderText('S1,S2,S3')
-        self.feInsertionInput.textChanged.connect(self.validate_inputs)
-        self.feInsertionInput.setStyleSheet("""
-            QLineEdit {
-                border-radius: 5px;
-                background-color: #F0F0F0;
-                min-height: 30px;
-                padding: 5px;
-            }
-        """)
-        feInsertionLayout.addWidget(feInsertionLabel)
-        feInsertionLayout.addWidget(self.feInsertionInput)
-
-        # FE Input Row
-        feInputRow = QHBoxLayout()
-        feInputRow.addLayout(feLotLayout)
-        feInputRow.addLayout(feInsertionLayout)
-        mainLayout.addLayout(feInputRow)
-
-        # Status area
         self.statusArea = QLabel("Ready to extract files...")
         self.statusArea.setStyleSheet("color: gray; margin-top: 5px; margin-bottom: 10px;")
         mainLayout.addWidget(self.statusArea)
@@ -295,106 +378,239 @@ class UploadPage(QWidget):
         mainLayout.addWidget(self.fileListScrollArea)
         mainLayout.addStretch()
 
-    def closeEvent(self, event):
-        """Handle cleanup when the widget is closed"""
-        self.cleanup_workers()
-        super().closeEvent(event)
-    
-    def cleanup_workers(self):
-        """Clean up any running worker threads"""
-        for worker in self.active_workers:
-            if worker.isRunning():
-                worker.stop()  # Signal the worker to stop
-                worker.wait()  # Wait for it to finish
-        self.active_workers.clear()
+    def extract_zip_file(self, zip_path):
+        try:
+            extracted_files = []
+            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                for file_info in zip_ref.infolist():
+                    if file_info.filename.endswith(('.eff', '.tsf')):
+                        extract_path = os.path.join(self.temp_dir, os.path.basename(file_info.filename))
+                        with zip_ref.open(file_info) as source, open(extract_path, 'wb') as target:
+                            target.write(source.read())
+                        extracted_files.append(extract_path)
+            return extracted_files
+        except Exception as e:
+            QMessageBox.warning(self, "Extraction Error", f"Failed to extract {zip_path}: {str(e)}")
+            return []
+
+    def add_lot_field(self, is_frontend=False):
+        lot_input = LotInputWithInsertion(self.delete_icon, is_frontend)
+        lot_input.deleted.connect(self.remove_lot_field)
+        lot_input.input.textChanged.connect(self.validate_inputs)
+        if is_frontend:
+            lot_input.wafer_input.textChanged.connect(self.validate_inputs)
+        for insertion_input in lot_input.insertion_inputs:
+            insertion_input.textChanged.connect(self.validate_inputs)
+        self.lot_inputs.append(lot_input)
+        self.lotFieldsLayout.addWidget(lot_input)
+        self.update_delete_buttons()
+
+    def remove_lot_field(self, lot_widget):
+        if len(self.lot_inputs) > 0:
+            self.lot_inputs.remove(lot_widget)
+            lot_widget.deleteLater()
+            self.update_delete_buttons()
+            self.validate_inputs()
+
+    def update_delete_buttons(self):
+        for i, lot_input in enumerate(self.lot_inputs):
+            lot_input.deleteBtn.setVisible(len(self.lot_inputs) > 0)
 
     def validate_inputs(self):
-        """
-        Validates that at least one set of inputs (BE or FE) is complete.
-        Enables the extract button if either BE or FE inputs are valid.
-        """
-        be_valid = bool(self.beLotInput.text().strip() and self.beInsertionInput.text().strip())
-        fe_valid = bool(self.feLotInput.text().strip() and self.feInsertionInput.text().strip())
-        self.extractButton.setEnabled(be_valid or fe_valid)
+        lots_valid = True
+        has_insertions = False
+        
+        for lot_input in self.lot_inputs:
+            if lot_input.is_frontend:
+                if not (lot_input.input.text().strip() and lot_input.wafer_input.text().strip()):
+                    lots_valid = False
+                    break
+            else:
+                if not lot_input.input.text().strip():
+                    lots_valid = False
+                    break
+            
+            insertions = lot_input.get_insertions()
+            if insertions:
+                has_insertions = True
+        
+        self.extractButton.setEnabled(lots_valid and has_insertions and len(self.lot_inputs) > 0)
+        
+        if lots_valid and has_insertions:
+            self.check_existing_files()
 
-    def parse_insertions(self, insertion_text: str) -> List[str]:
-        return [x.strip() for x in insertion_text.split(',') if x.strip()]
+    def get_expected_filename(self, lot, insertion, wafer=None):
+        if wafer:
+            return f"{lot}_{wafer}_{insertion}.eff"
+        return f"{lot}_{insertion}.eff"
 
-    def validate_insertion_type(self, insertions: List[str], expected_prefix: str) -> bool:
-        return all(insertion.startswith(expected_prefix) for insertion in insertions)
+    def check_file_exists(self, lot, insertion, wafer=None):
+        expected_file = os.path.join(self.output_dir, self.get_expected_filename(lot, insertion, wafer))
+        return os.path.exists(expected_file)
+
+    def add_file_if_not_exists(self, file_path):
+        existing_paths = [path for path, _ in self.uploaded_files]
+        if file_path not in existing_paths and os.path.exists(file_path):
+            self.addFile(file_path)
+            self.proceedButton.setEnabled(True)
+
+    def check_existing_files(self):
+        for lot_input in self.lot_inputs:
+            lot = lot_input.input.text().strip()
+            if not lot:
+                continue
+                
+            wafer = lot_input.wafer_input.text().strip() if lot_input.is_frontend else None
+            insertions = lot_input.get_insertions()
+            
+            for insertion in insertions:
+                if insertion and self.check_file_exists(lot, insertion, wafer):
+                    file_path = os.path.join(self.output_dir, self.get_expected_filename(lot, insertion, wafer))
+                    self.add_file_if_not_exists(file_path)
 
     def start_extraction(self):
         try:
-            # Clean up any existing workers first
-            self.cleanup_workers()
-            
-            extractions = {}
-            
-            # Process backend extraction if BE fields are filled
-            be_lot = self.beLotInput.text().strip()
-            be_insertions = self.parse_insertions(self.beInsertionInput.text())
-            if be_lot and be_insertions:
-                if not self.validate_insertion_type(be_insertions, 'B'):
-                    QMessageBox.warning(self, "Input Error", "Backend insertions must start with 'B'")
-                    return
-                extractions[ExtractionType.BACKEND] = (be_lot, be_insertions)
-            
-            # Process frontend extraction if FE fields are filled
-            fe_lot = self.feLotInput.text().strip()
-            fe_insertions = self.parse_insertions(self.feInsertionInput.text())
-            if fe_lot and fe_insertions:
-                if not self.validate_insertion_type(fe_insertions, 'S'):
-                    QMessageBox.warning(self, "Input Error", "Frontend insertions must start with 'S'")
-                    return
-                extractions[ExtractionType.FRONTEND] = (fe_lot, fe_insertions)
-            
-            if not extractions:
-                QMessageBox.warning(self, "Input Error", "Please enter at least one valid extraction configuration")
+            self.chips_to_process = []
+            for lot_input in self.lot_inputs:
+                lot = lot_input.input.text().strip()
+                if not lot:
+                    continue
+
+                if lot_input.is_frontend:
+                    wafer = lot_input.wafer_input.text().strip()
+                    if not wafer:
+                        continue
+                else:
+                    wafer = None
+
+                insertions = lot_input.get_insertions()
+
+                for insertion in insertions:
+                    if not self.check_file_exists(lot, insertion, wafer):
+                        self.chips_to_process.append((lot, insertion, wafer, lot_input.is_frontend))
+                    else:
+                        file_path = os.path.join(self.output_dir, self.get_expected_filename(lot, insertion, wafer))
+                        self.add_file_if_not_exists(file_path)
+
+            if not self.chips_to_process:
+                QMessageBox.information(self, "Information", "All files have already been extracted!")
                 return
 
-            self.statusArea.setText("Extracting files...")
+            self.current_extraction_index = 0
+            self.statusArea.setText("Starting extraction...")
             self.extractButton.setEnabled(False)
-            
-            # Start extraction workers for each configured type
-            for extraction_type, (lot, insertions) in extractions.items():
-                worker = ExtractionWorker(lot, insertions, self.extractor, extraction_type)
-                worker.finished.connect(self.extraction_completed)
-                worker.file_created.connect(self.add_extracted_file)
-                # Important: Store worker reference to prevent premature garbage collection
-                self.active_workers.append(worker)
-                worker.start()
+            self.process_next_chip()
 
         except Exception as e:
             QMessageBox.critical(self, "Error", str(e))
             self.statusArea.setText("Extraction failed")
             self.extractButton.setEnabled(True)
 
-    def extraction_completed(self, status_list: list):
-        """Handle completion of extraction process"""
-        for worker in self.active_workers[:]:  
-            if not worker.isRunning():
-                self.active_workers.remove(worker)
-                worker.deleteLater() 
+    def process_next_chip(self):
+        if self.current_extraction_index < len(self.chips_to_process):
+            current_lot, current_insertion, current_wafer, is_frontend = self.chips_to_process[self.current_extraction_index]
+            
+            extractor = self.extractors['frontend'] if is_frontend else self.extractors['backend']
+            
+            self.extraction_worker = ExtractionWorker(
+                current_lot,
+                [current_insertion],
+                extractor,
+                wafer=current_wafer,
+                max_workers=os.cpu_count()
+            )
+            
+            self.extraction_worker.finished.connect(self.extraction_completed)
+            self.extraction_worker.file_created.connect(
+                lambda f: self.add_extracted_file(f, current_lot, current_insertion, current_wafer)
+            )
+            self.extraction_worker.progress.connect(self.update_progress)
+            self.extraction_worker.start()
 
-        if not self.active_workers:
+            status_text = f"Processing lot {current_lot}"
+            if current_wafer:
+                status_text += f", wafer {current_wafer}"
+            status_text += f", insertion {current_insertion}..."
+            self.statusArea.setText(status_text)
+        else:
             self.extractButton.setEnabled(True)
-            success_count = sum(1 for status in status_list if status[0].strip() == "Finished!")
-            total_count = len(status_list)
+            self.statusArea.setText("Extraction completed for all chips")
+
+    def extraction_completed(self, status_list):
+        current_lot, current_insertion, current_wafer, _ = self.chips_to_process[self.current_extraction_index]
+        success = any(status[0].strip() == "Finished!" for status in status_list)
+        
+        if success:
+            output_file = os.path.join(self.output_dir, 
+                                     self.get_expected_filename(current_lot, current_insertion, current_wafer))
+            try:
+                self.add_extracted_file(output_file, current_lot, current_insertion, current_wafer)
+            except Exception as e:
+                QMessageBox.warning(self, "Processing Warning", f"Error processing file: {str(e)}")
+        
+        self.current_extraction_index += 1
+        if self.current_extraction_index < len(self.chips_to_process):
+            self.process_next_chip()
+        else:
+            self.extractButton.setEnabled(True)
+            self.statusArea.setText("All extractions completed")
+            QMessageBox.information(self, "Extraction Complete", "All chips have been processed")
+
+    def update_progress(self, filename, progress, real_filename, filesize):
+        if self.current_extraction_index < len(self.chips_to_process):
+            current_lot, current_insertion, current_wafer, _ = self.chips_to_process[self.current_extraction_index]
+            status_text = f"Processing lot {current_lot}"
+            if current_wafer:
+                status_text += f", wafer {current_wafer}"
+            status_text += f", insertion {current_insertion}: {progress}%"
+            self.statusArea.setText(status_text)
+
+    def add_extracted_file(self, file_path, lot, insertion, wafer=None):
+        if os.path.isfile(file_path):
+            new_filename = self.get_expected_filename(lot, insertion, wafer)
+            new_path = os.path.join(self.output_dir, new_filename)
             
-            result_message = f"Extraction completed successfully"
-            self.statusArea.setText(result_message)
-            
-            if success_count < total_count:
-                QMessageBox.warning(self, "Extraction Complete", result_message)
+            if any(new_path == path for path, _ in self.uploaded_files):
+                return
+                
+            if file_path != new_path:
+                try:
+                    os.rename(file_path, new_path)
+                    self.addFile(new_path)
+                except Exception as e:
+                    QMessageBox.warning(self, "File Error", f"Error renaming file: {str(e)}")
+                    if not any(file_path == path for path, _ in self.uploaded_files):
+                        self.addFile(file_path)
             else:
-                QMessageBox.information(self, "Extraction Complete", result_message)
+                if not any(file_path == path for path, _ in self.uploaded_files):
+                    self.addFile(file_path)
+            
+            self.proceedButton.setEnabled(True)
+
+    def closeEvent(self, event):
+        self.cleanup_workers()
+        super().closeEvent(event)
+    
+    def cleanup_workers(self):
+        for worker in self.active_workers:
+            if worker.isRunning():
+                worker.stop()
+                worker.wait()
+        self.active_workers.clear()
 
     def emit_show_setting(self):
         self.show_setting_signal.emit()
     
     def on_proceed_clicked(self):
-        file_paths = [path for path, _ in self.uploaded_files]
-        self.show_selection_signal.emit(file_paths)
+        all_files = []
+        for file_path, _ in self.uploaded_files:
+            if file_path.endswith('.zip'):
+                extracted = self.extract_zip_file(file_path)
+                all_files.extend(extracted)
+            else:
+                all_files.append(file_path)
+        
+        self.show_selection_signal.emit(all_files)
 
     def show_admin_login(self):
         self.show_admin_login_signal.emit()
@@ -459,7 +675,7 @@ class UploadPage(QWidget):
             fileTitleLayout.addWidget(fileSizeLabel)
             
             deleteButton = QPushButton()
-            deleteButton.setIcon(QPixmap('./src/frontend/resources/icons/delete.png').scaled(
+            deleteButton.setIcon(QPixmap(resource_path('./resources/icons/delete.png')).scaled(
                 20,
                 20,
                 Qt.KeepAspectRatio,
@@ -477,12 +693,12 @@ class UploadPage(QWidget):
 
     def get_icon_path(self, filePath):
         if filePath.endswith('.zip'):
-            return './src/frontend/resources/icons/ZIP.png'
+            return resource_path('./resources/icons/ZIP.png')
         elif filePath.endswith('.eff'):
-            return './src/frontend/resources/icons/EFF.png'
+            return resource_path('./resources/icons/EFF.png')
         elif filePath.endswith('.tsf'):
-            return './src/frontend/resources/icons/TSF.png'
-        return './src/frontend/resources/icons/default.png'
+            return resource_path('./resources/icons/TSF.png')
+        return resource_path('./resources/icons/default.png')
 
     def removeFile(self, filePath, fileWidget):
         for path, widget in self.uploaded_files:
@@ -500,8 +716,3 @@ class UploadPage(QWidget):
             fileWidget.setParent(None)
             fileWidget.deleteLater()
         self.proceedButton.setEnabled(False)
-
-    def add_extracted_file(self, file_path: str):
-        if os.path.isfile(file_path):
-            self.addFile(file_path)
-            self.proceedButton.setEnabled(True)

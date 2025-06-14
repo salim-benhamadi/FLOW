@@ -28,9 +28,9 @@ class Settings(BaseSettings):
     # Database settings - will be overridden by environment variables
     POSTGRES_HOST: str = os.getenv("POSTGRES_HOST", "localhost")
     POSTGRES_PORT: str = os.getenv("POSTGRES_PORT", "5432")
-    POSTGRES_DB: str = os.getenv("POSTGRES_DB", "postgres")
+    POSTGRES_DB: str = os.getenv("POSTGRES_DB", "vamos-db")
     POSTGRES_USER: str = os.getenv("POSTGRES_USER", "postgres")
-    POSTGRES_PASSWORD: str = os.getenv("POSTGRES_PASSWORD", "")
+    POSTGRES_PASSWORD: str = os.getenv("POSTGRES_PASSWORD", "root")
     
     # Cloud-specific settings
     DATABASE_SSL_MODE: str = os.getenv("DATABASE_SSL_MODE", "prefer")

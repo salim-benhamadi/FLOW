@@ -39,6 +39,22 @@ class FeedbackDialog(QDialog):
         layout.addLayout(status_layout)
 
         self.feedback_checkbox = QCheckBox("Send as feedback")
+        self.feedback_checkbox.setStyleSheet("""
+                QCheckBox {
+                    border : none;
+                    margin-bottom : 10px;
+                    }
+                QCheckBox::indicator {
+                    width: 15px;
+                    height: 15px;
+                    border: 1px solid #DADEE8;
+                    border-radius: 5px;
+                    background-color: white; 
+                }
+                QCheckBox::indicator:checked {
+                    background-color: #1849D6;
+                }
+            """)
         self.feedback_checkbox.stateChanged.connect(self.on_feedback_checked)
         layout.addWidget(self.feedback_checkbox)
 

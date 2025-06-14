@@ -5,6 +5,7 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFrame,
 from PySide6.QtCore import Qt, QSize
 from ui.widgets.PlotDialog import PlotDialog
 from ui.widgets.FeedbackApprovalDialog import FeedbackApprovalDialog
+from ui.utils.PathResources import resource_path
 from PySide6.QtGui import QFont, QIcon, QColor, QBrush
 import asyncio
 import logging
@@ -137,7 +138,7 @@ class FeedbackTab(QWidget):
         
         # Search icon
         search_icon = QToolButton()
-        search_icon.setIcon(QIcon("./src/frontend/resources/icons/search.png"))
+        search_icon.setIcon(QIcon(resource_path("./resources/icons/search.png")))
         search_icon.setIconSize(QSize(20, 20))
         search_icon.setStyleSheet("background: transparent; border: none;")
         
@@ -291,9 +292,9 @@ class FeedbackTab(QWidget):
         edit_btn.clicked.connect(lambda: self.edit_feedback(row))
         
         try:
-            view_btn.setIcon(QIcon("./src/frontend/resources/icons/Plot.png"))
+            view_btn.setIcon(QIcon(resource_path("./resources/icons/Plot.png")))
             view_btn.setIconSize(QSize(20, 20))
-            edit_btn.setIcon(QIcon("./src/frontend/resources/icons/edit.png"))
+            edit_btn.setIcon(QIcon(resource_path("./resources/icons/edit.png")))
             edit_btn.setIconSize(QSize(20, 20))
         except:
             # If icons fail to load, we already have emoji fallbacks

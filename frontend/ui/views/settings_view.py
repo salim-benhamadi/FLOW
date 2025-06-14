@@ -1,6 +1,7 @@
 from PySide6.QtWidgets import (QApplication, QWidget, QLabel, QVBoxLayout, QGraphicsDropShadowEffect, 
                              QHBoxLayout, QCheckBox, QComboBox, QPushButton, QMessageBox)
 from PySide6.QtGui import QFont, QPixmap
+from ui.utils.PathResources import resource_path
 from PySide6.QtCore import Qt, Signal
 import json
 import os
@@ -74,7 +75,7 @@ class SettingPage(QWidget):
         info_layout = QHBoxLayout()
         
         info_icon = QLabel()
-        info_icon_pixmap = QPixmap("./src/frontend/resources/icons/Info.png")  
+        info_icon_pixmap = QPixmap(resource_path("./resources/icons/Info.png"))  
         info_icon_pixmap = info_icon_pixmap.scaled(32, 32, Qt.KeepAspectRatio, Qt.SmoothTransformation)
         info_icon.setPixmap(info_icon_pixmap)
         info_icon.setStyleSheet("border:none; min-height : none")

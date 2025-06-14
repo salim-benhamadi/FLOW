@@ -54,7 +54,6 @@ class PhaseIndicator(QWidget):
                     border: none;
                     border-radius: 10px;
                     background-color: #3B82F6;  /* blue-500 */
-                    animation: spin 1s linear infinite;
                 }
             """)
             self.label.setStyleSheet("color: #3B82F6;")  # blue-500

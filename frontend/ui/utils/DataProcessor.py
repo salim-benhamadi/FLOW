@@ -1,6 +1,6 @@
 from PySide6.QtCore import Signal, QThread
 from ui.utils.Model import analyze_distribution_similarity
-from effio import EFF
+from ui.utils.Effio import EFF
 import pandas as pd
 import numpy as np
 import random
@@ -8,7 +8,7 @@ import re
 import logging
 from typing import Dict, List, Optional, Tuple, Union
 from pathlib import Path
-
+from ui.utils.PathResources import resource_path
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -170,12 +170,22 @@ class DataProcessor(QThread):
 
     def process_single_file(self, input_file: str) -> Optional[pd.DataFrame]:
         try:
-            reference_file = re.search(r'B(\d+)', input_file)
-            b_number = reference_file.group(1) if reference_file else '1'
-            reference_path = str(Path(input_file).parent / f'ZA407235G04_B{b_number}.eff')
-            df_ref, _ = EFF.read(reference_path)
+            # Input data extraction
             df_input, _ = EFF.read(input_file)
-            
+
+            df_info_1 = EFF.get_value_rows(df_input, header='<+ParameterName>')
+            lot_input = df_info_1['Lot'].iloc[0] if not df_info_1.empty else "Unknown"
+            insertion_input = df_info_1['MeasStep'].iloc[0] if not df_info_1.empty else "Unknown"
+
+            # Reference data extraction
+            reference_path = resource_path(f'resources/output/ZA407235G04_{insertion_input}.eff')
+            if not Path(reference_path).exists():
+                reference_path = resource_path(f'resources/output/ZA407235G04_B1.eff')
+            df_ref, _ = EFF.read(reference_path)
+            df_info_2 = EFF.get_value_rows(df_ref, header='<+ParameterName>')
+            lot_reference = df_info_2['Lot'].iloc[0] if not df_info_2.empty else "Unknown"
+            insertion_reference = df_info_2['MeasStep'].iloc[0] if not df_info_2.empty else "Unknown"
+
             TNUMBERS = EFF.get_description_rows(df_input, header="<+ParameterName>")[self.selected_items].loc['<+ParameterNumber>']
             TNUMBERS = TNUMBERS.astype(str)
             
@@ -185,25 +195,28 @@ class DataProcessor(QThread):
             df_testdata_1_full.columns = df_testdata_1_full.columns.astype(str)
             df_testdata_2_full.columns = df_testdata_2_full.columns.astype(str)
 
+            # Create dictionaries keyed by test name instead of test number
             input_data_dict = {}
             reference_data_dict = {}
             sampled_data_1 = pd.DataFrame()
             sampled_data_2 = pd.DataFrame()
 
-            for t_number in TNUMBERS:
-                test_name = self.selected_items[TNUMBERS.tolist().index(t_number)]
+            for idx, t_number in enumerate(TNUMBERS):
+                test_name = self.selected_items[idx]
                 
                 if t_number not in df_testdata_1_full.columns or t_number not in df_testdata_2_full.columns:
-                    input_data_dict[t_number] = []
-                    reference_data_dict[t_number] = []
+                    input_data_dict[test_name] = []
+                    reference_data_dict[test_name] = []
+                    logger.warning(f"Test number {t_number} not found in data columns for test {test_name}")
                     continue
 
                 input_series = df_testdata_1_full[t_number].dropna()
                 reference_series = df_testdata_2_full[t_number].dropna()
                 
                 if len(input_series) == 0 or len(reference_series) == 0:
-                    input_data_dict[t_number] = []
-                    reference_data_dict[t_number] = []
+                    input_data_dict[test_name] = []
+                    reference_data_dict[test_name] = []
+                    logger.warning(f"No valid data for test {test_name} (number: {t_number})")
                     continue
                     
                 input_df = pd.DataFrame({t_number: input_series})
@@ -217,22 +230,23 @@ class DataProcessor(QThread):
                     sampled_reference = reference_series.iloc[reference_indices]
                     sampled_data_1[t_number] = sampled_input.reset_index(drop=True)
                     sampled_data_2[t_number] = sampled_reference.reset_index(drop=True)
-                    input_data_dict[t_number] = sampled_input.tolist()
-                    reference_data_dict[t_number] = sampled_reference.tolist()
+                    
+                    # Store data with test name as key
+                    input_data_dict[test_name] = sampled_input.tolist()
+                    reference_data_dict[test_name] = sampled_reference.tolist()
+                    
+                    logger.info(f"Stored data for test {test_name}: input={len(sampled_input)}, reference={len(sampled_reference)}")
                 else:
-                    input_data_dict[t_number] = []
-                    reference_data_dict[t_number] = []
-
-            df_info_1 = EFF.get_value_rows(df_input, header='<+ParameterName>')
-            df_info_2 = EFF.get_value_rows(df_ref, header='<+ParameterName>')
-
-            lot_reference = df_info_2['Lot'].iloc[0] if not df_info_2.empty else "Unknown"
-            insertion_reference = df_info_2['MeasStep'].iloc[0] if not df_info_2.empty else "Unknown"
-            lot_input = df_info_1['Lot'].iloc[0] if not df_info_1.empty else "Unknown"
-            insertion_input = df_info_1['MeasStep'].iloc[0] if not df_info_1.empty else "Unknown"
+                    input_data_dict[test_name] = []
+                    reference_data_dict[test_name] = []
+                    logger.warning(f"No sampled indices for test {test_name}")
 
             columns = list(sampled_data_1.columns)
             total_columns = len(columns)
+
+            if total_columns == 0:
+                logger.error("No valid test data found in file")
+                return None
 
             df1_description = sampled_data_1.describe().round(8).T
             df2_description = sampled_data_2.describe().round(8).T
@@ -329,13 +343,28 @@ class DataProcessor(QThread):
             result_df["Yield_Loss"] = yield_loss_values
             result_df["Rejection_Rate"] = rejection_rate_values
             result_df["Module"] = result_df["Test Number"].map(self.get_module)
+            
+            # Map using Test Name (which is the key in our dictionaries)
             result_df["input_data"] = result_df["Test Name"].map(input_data_dict)
             result_df["reference_data"] = result_df["Test Name"].map(reference_data_dict)
+            
+            # Add measurements column for compatibility
+            result_df["measurements"] = result_df["input_data"]
+            
+            # Debug logging
+            logger.info(f"Data mapping results:")
+            for idx, row in result_df.iterrows():
+                test_name = row["Test Name"]
+                has_input = test_name in input_data_dict and len(input_data_dict[test_name]) > 0
+                has_reference = test_name in reference_data_dict and len(reference_data_dict[test_name]) > 0
+                logger.info(f"  {test_name}: input_data={has_input}, reference_data={has_reference}")
 
             return result_df
 
         except Exception as e:
             logger.error(f"Error processing file {input_file}: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return None
 
     def run(self):
@@ -364,6 +393,13 @@ class DataProcessor(QThread):
                     combined_df = pd.concat(successful_results, ignore_index=True)
                     output_path = Path('test_results_analysis.xlsx')
                     combined_df.to_excel(output_path, index=False)
+                    
+                    # Log summary of results
+                    logger.info(f"Processing complete. Total rows: {len(combined_df)}")
+                    null_input = combined_df['input_data'].isna().sum()
+                    null_reference = combined_df['reference_data'].isna().sum()
+                    logger.info(f"Null input_data: {null_input}, Null reference_data: {null_reference}")
+                    
                     self.result.emit(combined_df)
                 except Exception as e:
                     logger.error(f"Error combining results: {str(e)}")
