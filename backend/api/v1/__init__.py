@@ -4,8 +4,7 @@ from .routers import analyze, feedback, metrics, configurations, reference, inpu
 # Create the main v1 router
 router = APIRouter()
 
-# Include all routers
-router.include_router(metrics.router, prefix="/api/v1")
+# Include all routers with proper prefixes (remove duplicate metrics router)
 router.include_router(analyze.router, prefix="/analyze", tags=["analyze"])
 router.include_router(feedback.router, prefix="/feedback", tags=["feedback"])
 router.include_router(metrics.router, prefix="/metrics", tags=["metrics"])
