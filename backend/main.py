@@ -54,7 +54,7 @@ async def health_check():
     try:
         # Test database connection
         db = DatabaseConnection()
-        db_status = "connected" if await db.test_connection() else "disconnected"
+        db_status = "connected" if db.test_connection() else "disconnected"
         
         return {
             "status": "healthy",
@@ -85,7 +85,7 @@ async def startup_event():
     # Test database connection on startup
     try:
         db = DatabaseConnection()
-        if await db.test_connection():
+        if db.test_connection():
             logger.info("✅ Database connection successful")
         else:
             logger.warning("⚠️ Database connection failed")
