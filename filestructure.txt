@@ -248,6 +248,46 @@
                 |-- RECORD
                 |-- top_level.txt
                 |-- WHEEL
+            |-- charset_normalizer
+                |-- api.py
+                |-- cd.py
+                |-- cli
+                    |-- __init__.py
+                    |-- __main__.py
+                    |-- __pycache__
+                        |-- __init__.cpython-311.pyc
+                        |-- __main__.cpython-311.pyc
+                |-- constant.py
+                |-- legacy.py
+                |-- md.cp311-win_amd64.pyd
+                |-- md.py
+                |-- md__mypyc.cp311-win_amd64.pyd
+                |-- models.py
+                |-- py.typed
+                |-- utils.py
+                |-- version.py
+                |-- __init__.py
+                |-- __main__.py
+                |-- __pycache__
+                    |-- api.cpython-311.pyc
+                    |-- cd.cpython-311.pyc
+                    |-- constant.cpython-311.pyc
+                    |-- legacy.cpython-311.pyc
+                    |-- md.cpython-311.pyc
+                    |-- models.cpython-311.pyc
+                    |-- utils.cpython-311.pyc
+                    |-- version.cpython-311.pyc
+                    |-- __init__.cpython-311.pyc
+                    |-- __main__.cpython-311.pyc
+            |-- charset_normalizer-3.4.2.dist-info
+                |-- entry_points.txt
+                |-- INSTALLER
+                |-- licenses
+                    |-- LICENSE
+                |-- METADATA
+                |-- RECORD
+                |-- top_level.txt
+                |-- WHEEL
             |-- click
                 |-- core.py
                 |-- decorators.py
@@ -15512,6 +15552,53 @@
                 |-- RECORD
                 |-- top_level.txt
                 |-- WHEEL
+            |-- requests
+                |-- adapters.py
+                |-- api.py
+                |-- auth.py
+                |-- certs.py
+                |-- compat.py
+                |-- cookies.py
+                |-- exceptions.py
+                |-- help.py
+                |-- hooks.py
+                |-- models.py
+                |-- packages.py
+                |-- sessions.py
+                |-- status_codes.py
+                |-- structures.py
+                |-- utils.py
+                |-- _internal_utils.py
+                |-- __init__.py
+                |-- __pycache__
+                    |-- adapters.cpython-311.pyc
+                    |-- api.cpython-311.pyc
+                    |-- auth.cpython-311.pyc
+                    |-- certs.cpython-311.pyc
+                    |-- compat.cpython-311.pyc
+                    |-- cookies.cpython-311.pyc
+                    |-- exceptions.cpython-311.pyc
+                    |-- help.cpython-311.pyc
+                    |-- hooks.cpython-311.pyc
+                    |-- models.cpython-311.pyc
+                    |-- packages.cpython-311.pyc
+                    |-- sessions.cpython-311.pyc
+                    |-- status_codes.cpython-311.pyc
+                    |-- structures.cpython-311.pyc
+                    |-- utils.cpython-311.pyc
+                    |-- _internal_utils.cpython-311.pyc
+                    |-- __init__.cpython-311.pyc
+                    |-- __version__.cpython-311.pyc
+                |-- __version__.py
+            |-- requests-2.32.4.dist-info
+                |-- INSTALLER
+                |-- licenses
+                    |-- LICENSE
+                |-- METADATA
+                |-- RECORD
+                |-- REQUESTED
+                |-- top_level.txt
+                |-- WHEEL
             |-- scipy
                 |-- cluster
                     |-- hierarchy.py
@@ -20020,6 +20107,97 @@
                 |-- RECORD
                 |-- top_level.txt
                 |-- WHEEL
+            |-- urllib3
+                |-- connection.py
+                |-- connectionpool.py
+                |-- contrib
+                    |-- emscripten
+                        |-- connection.py
+                        |-- emscripten_fetch_worker.js
+                        |-- fetch.py
+                        |-- request.py
+                        |-- response.py
+                        |-- __init__.py
+                        |-- __pycache__
+                            |-- connection.cpython-311.pyc
+                            |-- fetch.cpython-311.pyc
+                            |-- request.cpython-311.pyc
+                            |-- response.cpython-311.pyc
+                            |-- __init__.cpython-311.pyc
+                    |-- pyopenssl.py
+                    |-- socks.py
+                    |-- __init__.py
+                    |-- __pycache__
+                        |-- pyopenssl.cpython-311.pyc
+                        |-- socks.cpython-311.pyc
+                        |-- __init__.cpython-311.pyc
+                |-- exceptions.py
+                |-- fields.py
+                |-- filepost.py
+                |-- http2
+                    |-- connection.py
+                    |-- probe.py
+                    |-- __init__.py
+                    |-- __pycache__
+                        |-- connection.cpython-311.pyc
+                        |-- probe.cpython-311.pyc
+                        |-- __init__.cpython-311.pyc
+                |-- poolmanager.py
+                |-- py.typed
+                |-- response.py
+                |-- util
+                    |-- connection.py
+                    |-- proxy.py
+                    |-- request.py
+                    |-- response.py
+                    |-- retry.py
+                    |-- ssltransport.py
+                    |-- ssl_.py
+                    |-- ssl_match_hostname.py
+                    |-- timeout.py
+                    |-- url.py
+                    |-- util.py
+                    |-- wait.py
+                    |-- __init__.py
+                    |-- __pycache__
+                        |-- connection.cpython-311.pyc
+                        |-- proxy.cpython-311.pyc
+                        |-- request.cpython-311.pyc
+                        |-- response.cpython-311.pyc
+                        |-- retry.cpython-311.pyc
+                        |-- ssltransport.cpython-311.pyc
+                        |-- ssl_.cpython-311.pyc
+                        |-- ssl_match_hostname.cpython-311.pyc
+                        |-- timeout.cpython-311.pyc
+                        |-- url.cpython-311.pyc
+                        |-- util.cpython-311.pyc
+                        |-- wait.cpython-311.pyc
+                        |-- __init__.cpython-311.pyc
+                |-- _base_connection.py
+                |-- _collections.py
+                |-- _request_methods.py
+                |-- _version.py
+                |-- __init__.py
+                |-- __pycache__
+                    |-- connection.cpython-311.pyc
+                    |-- connectionpool.cpython-311.pyc
+                    |-- exceptions.cpython-311.pyc
+                    |-- fields.cpython-311.pyc
+                    |-- filepost.cpython-311.pyc
+                    |-- poolmanager.cpython-311.pyc
+                    |-- response.cpython-311.pyc
+                    |-- _base_connection.cpython-311.pyc
+                    |-- _collections.cpython-311.pyc
+                    |-- _request_methods.cpython-311.pyc
+                    |-- _version.cpython-311.pyc
+                    |-- __init__.cpython-311.pyc
+            |-- urllib3-2.4.0.dist-info
+                |-- INSTALLER
+                |-- licenses
+                    |-- LICENSE.txt
+                |-- METADATA
+                |-- RECORD
+                |-- WHEEL
             |-- uvicorn
                 |-- config.py
                 |-- importer.py
@@ -21592,6 +21770,7 @@
         |-- fastapi.exe
         |-- fonttools.exe
         |-- httpx.exe
+        |-- normalizer.exe
         |-- pip.exe
         |-- pip3.11.exe
         |-- pip3.exe
