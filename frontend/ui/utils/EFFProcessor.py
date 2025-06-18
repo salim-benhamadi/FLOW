@@ -60,7 +60,7 @@ class EFFProcessor:
                     additional_indices = np.random.choice(available_indices, 
                                                         size=min(remaining, len(available_indices)), 
                                                         replace=False)
-                    unique_indices = np.concatenate([unique_indices, additional_indices])
+                    unique_indices = np.concatenate([unique_indices, additional_indices]).tolist()
             
             unique_indices = [int(i) for i in unique_indices if i.isdigit()]
             return np.sort(unique_indices).astype(int)
@@ -75,30 +75,26 @@ class EFFProcessor:
 
     async def process_eff_file(self, file_path: str, product: str, lot: str, insertion: str) -> dict:
         try:
+            print("-"*10)
             logger.debug("Starting EFF file processing: %s", file_path)
             product = product.upper()
             lot = lot.upper()
             insertion = insertion.upper()
-            
             df, _ = EFF.read(file_path)
-            header_info = EFF.get_description_rows(df, header="<+ParameterName>")
             mask = df.loc['<+ParameterNumber>'].apply(lambda x: str(x).isdigit())
             test_names = df.loc['<+ParameterName>'][mask].tolist()
             test_numbers = df.loc['<+ParameterNumber>'][mask].tolist()
-            
             lsls = EFF.lsl(df, test_numbers)
             usls = EFF.usl(df, test_numbers)
-            
             measurements_df = EFF.get_value_rows(df, fix_dtypes=True, header="<+ParameterName>")[test_names].fillna(0)
             sample_indices = self._get_representative_sample(measurements_df, self.sample_size)
             measurements_df = measurements_df.iloc[sample_indices, :]
-            
             reference_ids = []
             for test_idx, test_name in enumerate(test_names):
                 reference_id = f"REF_{product}_{lot}_{insertion}_{test_numbers[test_idx]}"
                 if reference_id in reference_ids:
                     continue
-                    
+                print("-"*10)    
                 reference_ids.append(reference_id)
                 reference_data = {
                     'reference_id': reference_id,
@@ -118,7 +114,7 @@ class EFFProcessor:
                     ]
                 }
                 await self.api_client.save_reference_data(reference_data)
-                
+            print("-"*10)    
             return {
                 'status': 'success',
                 'reference_ids': reference_ids,

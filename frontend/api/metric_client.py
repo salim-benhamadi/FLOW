@@ -1,36 +1,43 @@
-# File: src/frontend/api/metric_client.py
-
 from typing import List, Dict, Optional
 import httpx
 import asyncio
 import logging
+from config.api_config import (
+    get_api_base_url, 
+    get_api_timeout, 
+    get_api_verify_ssl, 
+    get_api_headers,
+    is_production
+)
 
 logger = logging.getLogger(__name__)
 
 class MetricClient:
-    def __init__(self, base_url: str = "http://localhost:8000"):
-        self.base_url = base_url
+    def __init__(self, base_url: Optional[str] = None):
+        self.base_url = base_url or get_api_base_url()
+        self.timeout = get_api_timeout()
+        self.verify_ssl = get_api_verify_ssl()
+        self.headers = get_api_headers()
         self.client = None
         self.client_lock = asyncio.Lock()
         self._closed = False
 
     async def _get_client(self):
-        """Get or create HTTP client with safety checks"""
         if self._closed:
-            raise RuntimeError("APIClient is closed")
+            raise RuntimeError("MetricClient is closed")
             
         async with self.client_lock:
             if self.client is None:
                 self.client = httpx.AsyncClient(
                     base_url=self.base_url,
-                    timeout=30.0,
-                    headers={"Accept": "application/json"},
+                    timeout=self.timeout,
+                    headers=self.headers,
+                    verify=self.verify_ssl,
                     http2=False
                 )
             return self.client
 
     async def _make_request(self, method: str, url: str, **kwargs):
-        """Make HTTP request with proper error handling"""
         client = await self._get_client()
         try:
             response = await client.request(method, url, **kwargs)
@@ -44,7 +51,6 @@ class MetricClient:
             raise
 
     async def get_model_metrics(self, days: int = 7) -> List[Dict]:
-        """Get model performance metrics"""
         try:
             return await self._make_request(
                 "GET",
@@ -55,33 +61,8 @@ class MetricClient:
             logger.error(f"Error getting model metrics: {e}")
             return []
 
-    async def get_api_metrics(self, days: int = 7) -> Dict:
-        """Get API usage metrics"""
-        try:
-            return await self._make_request(
-                "GET",
-                "/api/v1/metrics/api",
-                params={'days': days}
-            )
-        except Exception as e:
-            logger.error(f"Error getting API metrics: {e}")
-            return {}
-
     async def save_model_metrics(self, metrics_data: Dict) -> Dict:
-        """Save new model metrics"""
         try:
-            # Validate required fields for model metrics
-            required_fields = [
-                'accuracy', 'confidence', 'error_rate', 'model_version',
-                'model_path', 'training_reason', 'status', 'training_duration'
-            ]
-            
-            missing_fields = [field for field in required_fields 
-                            if field not in metrics_data]
-            
-            if missing_fields:
-                raise ValueError(f"Missing required fields: {', '.join(missing_fields)}")
-
             return await self._make_request(
                 "POST",
                 "/api/v1/metrics/model",
@@ -92,7 +73,6 @@ class MetricClient:
             raise
 
     async def get_distribution_metrics(self, days: int = 30) -> List[Dict]:
-        """Get metrics about distribution types"""
         try:
             return await self._make_request(
                 "GET",
@@ -104,7 +84,6 @@ class MetricClient:
             return []
 
     async def get_metrics_trend(self, days: int = 30) -> List[Dict]:
-        """Get trend analysis of metrics over time"""
         try:
             return await self._make_request(
                 "GET",
@@ -115,8 +94,40 @@ class MetricClient:
             logger.error(f"Error getting metrics trend: {e}")
             return []
 
+    async def get_api_usage_metrics(self, days: int = 30) -> List[Dict]:
+        try:
+            return await self._make_request(
+                "GET",
+                "/api/v1/metrics/usage",
+                params={'days': days}
+            )
+        except Exception as e:
+            logger.error(f"Error getting API usage metrics: {e}")
+            return []
+
+    async def get_performance_metrics(self, days: int = 7) -> Dict:
+        try:
+            return await self._make_request(
+                "GET",
+                "/api/v1/metrics/performance",
+                params={'days': days}
+            )
+        except Exception as e:
+            logger.error(f"Error getting performance metrics: {e}")
+            return {}
+
+    async def get_error_metrics(self, days: int = 7) -> List[Dict]:
+        try:
+            return await self._make_request(
+                "GET",
+                "/api/v1/metrics/errors",
+                params={'days': days}
+            )
+        except Exception as e:
+            logger.error(f"Error getting error metrics: {e}")
+            return []
+
     async def close(self):
-        """Close client resources safely"""
         if not self._closed:
             self._closed = True
             if self.client:

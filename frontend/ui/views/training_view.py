@@ -1,9 +1,11 @@
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFrame,
                                QLabel, QPushButton, QComboBox, QProgressBar, 
                                QTableWidget, QTableWidgetItem, QFileDialog,
-                               QMessageBox)
+                               QMessageBox, QTabWidget, QSplitter, QHeaderView,
+                               QGroupBox, QGridLayout, QSpacerItem, QSizePolicy,
+                               QScrollArea, QApplication)
 from PySide6.QtCore import Qt, QTimer, Signal, QThread
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QIcon, QColor
 from ui.utils.EFFProcessor import EFFProcessor
 from ui.widgets.EFFUploadDialog import EFFUploadDialog
 from datetime import datetime
@@ -13,7 +15,6 @@ import traceback
 import logging
 from PySide6.QtCore import QThread, Signal
 
-# Set up logging
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
@@ -36,11 +37,9 @@ class AsyncWorker(QThread):
             logger.debug("AsyncWorker starting run")
             self._is_running = True
             
-            # Create a new event loop for this thread
             self._loop = asyncio.new_event_loop()
             asyncio.set_event_loop(self._loop)
             
-            # Run the task and get result
             result = self._loop.run_until_complete(self._safe_run_task())
             
             logger.debug("Task completed with result: %s", result)
@@ -53,38 +52,41 @@ class AsyncWorker(QThread):
             self._cleanup()
 
     async def _safe_run_task(self):
-        """Wrapper to safely run the task with proper cleanup"""
         try:
             self._task = asyncio.create_task(self.run_task(**self.kwargs))
             return await self._task
         except asyncio.CancelledError:
             logger.debug("Task was cancelled")
             raise Exception("Operation cancelled")
+        except Exception as e:
+            logger.error(f"Task execution error: {str(e)}")
+            raise
         finally:
-            if self._task and not self._task.done():
-                self._task.cancel()
-                try:
-                    await self._task
-                except asyncio.CancelledError:
-                    pass
+            pass
 
     def _cleanup(self):
-        """Clean up resources safely"""
         logger.debug("Starting worker cleanup")
         try:
             if self._loop and not self._loop.is_closed():
-                # Cancel any pending tasks
-                for task in asyncio.all_tasks(self._loop):
-                    task.cancel()
+                pending_tasks = list(asyncio.all_tasks(self._loop))
                 
-                # Run the loop one last time to clean up
-                try:
-                    self._loop.run_until_complete(asyncio.gather(*asyncio.all_tasks(self._loop)))
-                except Exception:
-                    pass
+                if pending_tasks:
+                    for task in pending_tasks:
+                        if not task.done():
+                            task.cancel()
+                    
+                    try:
+                        self._loop.run_until_complete(
+                            asyncio.wait_for(
+                                asyncio.gather(*pending_tasks, return_exceptions=True),
+                                timeout=2.0
+                            )
+                        )
+                    except (asyncio.TimeoutError, Exception) as e:
+                        logger.debug(f"Task cleanup timeout or error: {e}")
                 
-                self._loop.stop()
-                self._loop.close()
+                if not self._loop.is_closed():
+                    self._loop.close()
         except Exception as e:
             logger.error("Error during cleanup: %s", str(e))
         finally:
@@ -94,11 +96,9 @@ class AsyncWorker(QThread):
             logger.debug("Worker cleanup completed")
 
     def stop(self):
-        """Safely stop the worker"""
         logger.debug("Stopping worker")
         if self._is_running and self._loop and not self._loop.is_closed():
             try:
-                # Schedule the cancellation in the worker's event loop
                 self._loop.call_soon_threadsafe(self._cancel_task)
             except Exception as e:
                 logger.error("Error cancelling task: %s", str(e))
@@ -106,44 +106,8 @@ class AsyncWorker(QThread):
         logger.debug("Worker stopped")
     
     def _cancel_task(self):
-        """Cancel the current task (called from the worker thread)"""
         if self._task and not self._task.done():
             self._task.cancel()
-        
-class RetrainingWorker(AsyncWorker):
-    progress = Signal(int, str, str)  # progress value, event, status
-    error = Signal(str)
-    finished = Signal(object)
-
-    async def run_task(self, file_path, product, lot, insertion):
-        try:
-            # Initialize EFF processor with the api_client
-            processor = EFFProcessor(self.api_client)
-            
-            self.progress.emit(25, "Reading EFF file", "In Progress")
-            
-            # Process EFF file with additional information
-            result = await processor.process_eff_file(
-                file_path,
-                product=product,
-                lot=lot,
-                insertion=insertion
-            )
-            
-            self.progress.emit(75, f"Processing complete for {product} - {lot}", "In Progress")
-            
-            # Final verification
-            if result.get('status') == 'success':
-                self.progress.emit(100, "Processing complete", "Success")
-                return True
-            else:
-                raise Exception(result.get('message', 'Unknown error occurred'))
-                
-        except Exception as e:
-            logger.error("Error in RetrainingWorker: %s", str(e), exc_info=True)
-            raise Exception(f"Error processing EFF file: {str(e)}")
-        
-
 
 class RetrainingTab(QWidget):
     def __init__(self, api_client):
@@ -151,6 +115,9 @@ class RetrainingTab(QWidget):
         self.api_client = api_client
         self.workers = []
         self.current_worker = None
+        self.reference_data = []
+        self.data_summary = []
+        self.connection_status = "unknown"
         self.filters = {
             'product': '',
             'lot': '',
@@ -161,13 +128,60 @@ class RetrainingTab(QWidget):
         QTimer.singleShot(0, self.load_initial_data)
 
     def load_initial_data(self):
-        """Initialize data loading"""
         logger.debug("Starting initial data load")
+        self.show_loading_state()
         self.load_reference_data()
-        #self.load_model_checkpoints()
+
+    def show_loading_state(self):
+        self.add_status_message("Initializing", "Loading reference data...")
+        self.addDataBtn.setEnabled(False)
+        self.retrainBtn.setEnabled(False)
+        self.deleteBtn.setEnabled(False)
+        self.set_loading_overlay("Loading data...")
+
+    def show_ready_state(self):
+        self.addDataBtn.setEnabled(True)
+        self.retrainBtn.setEnabled(True)
+        self.deleteBtn.setEnabled(True)
+        self.hide_loading_overlay()
+
+    def show_no_data_state(self):
+        self.addDataBtn.setEnabled(True)
+        self.retrainBtn.setEnabled(False)
+        self.deleteBtn.setEnabled(False)
+        self.hide_loading_overlay()
+        self.show_empty_data_message()
+
+    def set_loading_overlay(self, message="Processing..."):
+        self.loadingLabel.setText(f"⏳ {message}")
+        self.loadingLabel.show()
+        QApplication.processEvents()
+
+    def hide_loading_overlay(self):
+        self.loadingLabel.hide()
+        QApplication.processEvents()
+
+    def show_empty_data_message(self):
+        self.referenceTable.setRowCount(1)
+        self.referenceTable.setColumnCount(1)
+        self.referenceTable.setHorizontalHeaderLabels(["Status"])
+        
+        message_item = QTableWidgetItem("✅ Connected to backend - No reference data found.\nClick 'Add Reference Data' to upload EFF files and start training.")
+        message_item.setFlags(Qt.ItemIsEnabled)
+        message_item.setBackground(QColor("#f8f9fa"))
+        self.referenceTable.setItem(0, 0, message_item)
+        self.referenceTable.horizontalHeader().setStretchLastSection(True)
+        self.referenceTable.resizeRowsToContents()
+
+        self.summaryTable.setRowCount(1)
+        self.summaryTable.setColumnCount(1)
+        self.summaryTable.setHorizontalHeaderLabels(["Status"])
+        summary_item = QTableWidgetItem("No data available")
+        summary_item.setFlags(Qt.ItemIsEnabled)
+        summary_item.setBackground(QColor("#f8f9fa"))
+        self.summaryTable.setItem(0, 0, summary_item)
 
     def create_worker(self, coro, *args, **kwargs):
-        """Create and setup a worker thread"""
         worker = AsyncWorker(coro, *args, **kwargs)
         worker.finished.connect(lambda result: self.handle_worker_finished(worker, result))
         worker.error.connect(lambda error: self.handle_worker_error(worker, error))
@@ -175,115 +189,207 @@ class RetrainingTab(QWidget):
         return worker
 
     def handle_worker_finished(self, worker, result):
-        """Handle worker completion"""
         if worker in self.workers:
             self.workers.remove(worker)
+        if worker.isRunning():
+            worker.wait(1000)
         worker.deleteLater()
 
     def handle_worker_error(self, worker, error):
-        """Handle worker error"""
         if worker in self.workers:
             self.workers.remove(worker)
+        if worker.isRunning():
+            worker.wait(1000)
         worker.deleteLater()
         self.show_error("Operation Failed", str(error))
+        self.show_connection_error()
+
+    def show_connection_error(self):
+        self.connection_status = "error"
+        self.add_status_message("Connection Error", "Failed to connect to backend")
+        self.show_no_data_state()
 
     def load_reference_data(self):
-        """Load reference data into table"""
         worker = self.create_worker(self._async_load_reference_data)
         worker.finished.connect(self._update_reference_table)
         worker.start()
 
     async def _async_load_reference_data(self):
-        """Async operation to load reference data"""
+        from api.client import APIClient
+        
+        worker_api_client = None
         try:
-            data = await self.api_client.get_reference_data_list()
-            logger.debug(f"Loaded reference data: {len(data)} records")
-            return data
+            worker_api_client = APIClient()
+            data = await worker_api_client.get_reference_data_list()
+            self.connection_status = "connected"
+            logger.debug(f"Loaded reference data: {len(data) if data else 0} records")
+            return data if data else []
         except Exception as e:
+            self.connection_status = "error"
             logger.error(f"Error loading reference data: {str(e)}")
-            raise
+            return []
+        finally:
+            if worker_api_client:
+                try:
+                    await worker_api_client.close()
+                except Exception as e:
+                    logger.error(f"Error closing worker API client: {e}")
 
     def _update_reference_table(self, reference_data):
-        """Update the reference table with data"""
         try:
-            if not reference_data:
-                logger.warning("No reference data received")
+            self.reference_data = reference_data if reference_data else []
+            
+            logger.debug(f"Processing reference data: {len(self.reference_data)} records")
+            
+            if self.connection_status == "error":
+                self.add_status_message("Backend Connection", "Failed - Working in offline mode")
+                self.show_connection_error_in_table()
+                self.show_no_data_state()
+                return
+            
+            if not self.reference_data:
+                logger.info("Backend connected but no reference data available")
+                self.add_status_message("Reference Data", "Connected - No data found, ready to upload")
+                self.show_no_data_state()
                 return
 
-            # Update filter options
-            self._update_filter_options(reference_data)
-            
-            # Apply current filters to data
-            filtered_data = self._filter_data(reference_data)
-            
-            self.referenceTable.setRowCount(0)
-            for data in filtered_data:
-                row_position = self.referenceTable.rowCount()
-                self.referenceTable.insertRow(row_position)
-                
-                # Populate table cells
-                self.referenceTable.setItem(row_position, 0, QTableWidgetItem(str(data.get('product', ''))))
-                self.referenceTable.setItem(row_position, 1, QTableWidgetItem(str(data.get('lot', ''))))
-                self.referenceTable.setItem(row_position, 2, QTableWidgetItem(str(data.get('insertion', ''))))
-                self.referenceTable.setItem(row_position, 3, QTableWidgetItem(str(data.get('test_name', ''))))
-                self.referenceTable.setItem(row_position, 4, QTableWidgetItem(str(data.get('test_number', ''))))
-                self.referenceTable.setItem(row_position, 5, QTableWidgetItem(str(data.get('lsl', ''))))
-                self.referenceTable.setItem(row_position, 6, QTableWidgetItem(str(data.get('usl', ''))))
-                
-                created_at = data.get('created_at', '')
-                if created_at:
-                    try:
-                        dt = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
-                        formatted_date = dt.strftime("%Y-%m-%d %H:%M:%S")
-                    except Exception as e:
-                        logger.error(f"Error formatting date {created_at}: {str(e)}")
-                        formatted_date = created_at
-                    self.referenceTable.setItem(row_position, 7, QTableWidgetItem(formatted_date))
+            self.add_status_message("Reference Data", f"Loaded {len(self.reference_data)} records successfully")
+            self._update_filter_options(self.reference_data)
+            self._update_data_summary()
+            filtered_data = self._filter_data(self.reference_data)
+            self._populate_table_with_data(filtered_data)
+            self.show_ready_state()
 
-            logger.debug(f"Updated reference table with {self.referenceTable.rowCount()} rows")
         except Exception as e:
             logger.error(f"Error updating reference table: {str(e)}")
             self.show_error("Error updating reference table", str(e))
+            self.show_no_data_state()
+
+    def _update_data_summary(self):
+        if not self.reference_data:
+            return
+
+        summary_dict = {}
+        for data in self.reference_data:
+            product = data.get('product', 'Unknown')
+            lot = data.get('lot', 'Unknown')
+            insertion = data.get('insertion', 'Unknown')
+            
+            key = f"{product}|{lot}|{insertion}"
+            if key not in summary_dict:
+                summary_dict[key] = {
+                    'product': product,
+                    'lot': lot,
+                    'insertion': insertion,
+                    'test_count': 0,
+                    'created_at': data.get('created_at', '')
+                }
+            summary_dict[key]['test_count'] += 1
+
+        self.data_summary = list(summary_dict.values())
+        self._populate_summary_table()
+
+    def _populate_summary_table(self):
+        self.summaryTable.setColumnCount(5)
+        self.summaryTable.setHorizontalHeaderLabels([
+            "Product", "Lot", "Insertion", "Test Count", "Created At"
+        ])
+        
+        self.summaryTable.setRowCount(len(self.data_summary))
+        for row, data in enumerate(self.data_summary):
+            self.summaryTable.setItem(row, 0, QTableWidgetItem(str(data.get('product', ''))))
+            self.summaryTable.setItem(row, 1, QTableWidgetItem(str(data.get('lot', ''))))
+            self.summaryTable.setItem(row, 2, QTableWidgetItem(str(data.get('insertion', ''))))
+            self.summaryTable.setItem(row, 3, QTableWidgetItem(str(data.get('test_count', 0))))
+            
+            created_at = data.get('created_at', '')
+            if created_at:
+                try:
+                    dt = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+                    formatted_date = dt.strftime("%Y-%m-%d %H:%M")
+                except Exception:
+                    formatted_date = created_at
+                self.summaryTable.setItem(row, 4, QTableWidgetItem(formatted_date))
+
+        self.summaryTable.resizeColumnsToContents()
+
+    def show_connection_error_in_table(self):
+        self.referenceTable.setRowCount(1)
+        self.referenceTable.setColumnCount(1)
+        self.referenceTable.setHorizontalHeaderLabels(["Connection Status"])
+        
+        error_item = QTableWidgetItem("❌ Cannot connect to backend. Check your connection and try again.")
+        error_item.setFlags(Qt.ItemIsEnabled)
+        error_item.setBackground(QColor("#dc3545"))
+        error_item.setForeground(QColor("#ffffff"))
+        self.referenceTable.setItem(0, 0, error_item)
+
+    def _populate_table_with_data(self, filtered_data):
+        self.referenceTable.setColumnCount(8)
+        self.referenceTable.setHorizontalHeaderLabels([
+            "Product", "Lot", "Insertion", "Test Name", 
+            "Test Number", "LSL", "USL", "Created At"
+        ])
+        
+        self.referenceTable.setRowCount(len(filtered_data))
+        for row, data in enumerate(filtered_data):
+            self.referenceTable.setItem(row, 0, QTableWidgetItem(str(data.get('product', ''))))
+            self.referenceTable.setItem(row, 1, QTableWidgetItem(str(data.get('lot', ''))))
+            self.referenceTable.setItem(row, 2, QTableWidgetItem(str(data.get('insertion', ''))))
+            self.referenceTable.setItem(row, 3, QTableWidgetItem(str(data.get('test_name', ''))))
+            self.referenceTable.setItem(row, 4, QTableWidgetItem(str(data.get('test_number', ''))))
+            self.referenceTable.setItem(row, 5, QTableWidgetItem(str(data.get('lsl', ''))))
+            self.referenceTable.setItem(row, 6, QTableWidgetItem(str(data.get('usl', ''))))
+            
+            created_at = data.get('created_at', '')
+            if created_at:
+                try:
+                    dt = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+                    formatted_date = dt.strftime("%Y-%m-%d %H:%M:%S")
+                except Exception:
+                    formatted_date = created_at
+                self.referenceTable.setItem(row, 7, QTableWidgetItem(formatted_date))
+
+        self.referenceTable.resizeColumnsToContents()
+        logger.debug(f"Updated reference table with {self.referenceTable.rowCount()} rows")
 
     def _update_filter_options(self, reference_data):
-        """Update filter combo boxes with unique values"""
-        products = sorted(set(str(data.get('product', '')) for data in reference_data))
-        lots = sorted(set(str(data.get('lot', '')) for data in reference_data))
-        test_names = sorted(set(str(data.get('test_name', '')) for data in reference_data))
-        insertions = sorted(set(str(data.get('insertion', '')) for data in reference_data))
+        if not reference_data:
+            self._clear_filter_options()
+            return
+
+        products = sorted(set(str(data.get('product', '')) for data in reference_data if data.get('product')))
+        lots = sorted(set(str(data.get('lot', '')) for data in reference_data if data.get('lot')))
+        test_names = sorted(set(str(data.get('test_name', '')) for data in reference_data if data.get('test_name')))
+        insertions = sorted(set(str(data.get('insertion', '')) for data in reference_data if data.get('insertion')))
 
         current_product = self.productFilter.currentText()
         current_lot = self.lotFilter.currentText()
         current_test = self.testFilter.currentText()
         current_insertion = self.insertionFilter.currentText()
 
-        self.productFilter.clear()
-        self.lotFilter.clear()
-        self.testFilter.clear()
-        self.insertionFilter.clear()
+        self._populate_filter_combo(self.productFilter, products, current_product)
+        self._populate_filter_combo(self.lotFilter, lots, current_lot)
+        self._populate_filter_combo(self.testFilter, test_names, current_test)
+        self._populate_filter_combo(self.insertionFilter, insertions, current_insertion)
 
-        self.productFilter.addItem('')
-        self.lotFilter.addItem('')
-        self.testFilter.addItem('')
-        self.insertionFilter.addItem('')
+    def _populate_filter_combo(self, combo, items, current_value):
+        combo.clear()
+        combo.addItem('')
+        combo.addItems(items)
+        if current_value in items:
+            combo.setCurrentText(current_value)
 
-        self.productFilter.addItems(products)
-        self.lotFilter.addItems(lots)
-        self.testFilter.addItems(test_names)
-        self.insertionFilter.addItems(insertions)
-
-        # Restore previous selections if they still exist
-        if current_product in products:
-            self.productFilter.setCurrentText(current_product)
-        if current_lot in lots:
-            self.lotFilter.setCurrentText(current_lot)
-        if current_test in test_names:
-            self.testFilter.setCurrentText(current_test)
-        if current_insertion in insertions:
-            self.insertionFilter.setCurrentText(current_insertion)
+    def _clear_filter_options(self):
+        for combo in [self.productFilter, self.lotFilter, self.testFilter, self.insertionFilter]:
+            combo.clear()
+            combo.addItem('No data available')
+            combo.setEnabled(False)
 
     def _filter_data(self, reference_data):
-        """Filter reference data based on current filter settings"""
+        if not reference_data:
+            return []
+
         filtered_data = reference_data
         
         product_filter = self.productFilter.currentText()
@@ -299,60 +405,58 @@ class RetrainingTab(QWidget):
             filtered_data = [d for d in filtered_data if str(d.get('test_name', '')).lower() == test_filter.lower()]
         if insertion_filter:
             filtered_data = [d for d in filtered_data if str(d.get('insertion', '')).lower() == insertion_filter.lower()]
+        
         return filtered_data
 
     def apply_filters(self):
-        """Apply current filters and reload data"""
-        self.load_reference_data()
+        if self.reference_data:
+            filtered_data = self._filter_data(self.reference_data)
+            self._populate_table_with_data(filtered_data)
 
     def clear_filters(self):
-        """Clear all filters"""
-        self.productFilter.setCurrentText('')
-        self.lotFilter.setCurrentText('')
-        self.testFilter.setCurrentText('')
-        self.insertionFilter.setCurrentText('')
-        self.load_reference_data()
+        for combo in [self.productFilter, self.lotFilter, self.testFilter, self.insertionFilter]:
+            combo.setCurrentText('')
+        self.apply_filters()
 
-    def load_model_checkpoints(self):
-        """Load model checkpoints"""
-        worker = self.create_worker(self._async_load_checkpoints)
-        worker.finished.connect(self._update_checkpoints)
-        worker.start()
-
-    async def _async_load_checkpoints(self):
-        """Async operation to load checkpoints"""
-        #return await self.api_client.get_model_settings()
-        pass
-
-    def _update_checkpoints(self, settings):
-        """Update checkpoint combo box"""
-        try:
-            if settings and 'checkpoints' in settings:
-                self.checkpointCombo.clear()
-                for checkpoint in settings['checkpoints']:
-                    display_text = f"Model {checkpoint['version']}"
-                    if checkpoint.get('is_latest'):
-                        display_text += " (Latest)"
-                    display_text += f" - {checkpoint['date']}"
-                    self.checkpointCombo.addItem(display_text)
-        except Exception as e:
-            self.show_error("Error updating checkpoints", str(e))
+    def check_existing_data(self, product, lot, insertion):
+        for data in self.reference_data:
+            if (data.get('product', '').lower() == product.lower() and
+                data.get('lot', '').lower() == lot.lower() and
+                data.get('insertion', '').lower() == insertion.lower()):
+                return True
+        return False
 
     def add_reference_data(self):
-        """Handle reference data file upload"""
         dialog = EFFUploadDialog(self)
         if dialog.exec_():
             upload_data = dialog.get_data()
             logger.debug("Upload data received: %s", upload_data)
             
+            product = upload_data.get('product', '')
+            lot = upload_data.get('lot', '')
+            insertion = upload_data.get('insertion', '')
+            
+            if self.check_existing_data(product, lot, insertion):
+                reply = QMessageBox.question(
+                    self,
+                    "Data Already Exists",
+                    f"Reference data for Product: {product}, Lot: {lot}, Insertion: {insertion} already exists in the database.\n\nDo you want to update the existing data?",
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.No
+                )
+                
+                if reply == QMessageBox.No:
+                    return
+                
+                upload_data['update_existing'] = True
+            
+            self.set_loading_overlay("Processing EFF file...")
             self.progressBar.show()
             self.progressBar.setValue(0)
             self.addDataBtn.setEnabled(False)
             
-            # Clean up any existing worker
             self._cleanup_current_worker()
             
-            # Create and start new worker
             try:
                 self.current_worker = AsyncWorker(
                     run_task=self._async_process_reference_data,
@@ -362,16 +466,86 @@ class RetrainingTab(QWidget):
                 self.current_worker.error.connect(self._handle_worker_error)
                 self.current_worker.progress.connect(self._update_upload_progress)
                 
-                # Keep reference to worker
-                self.current_worker.setParent(self)  # Set parent to prevent premature destruction
+                self.current_worker.setParent(self)
                 self.current_worker.start()
                 logger.debug("New worker started")
                 
             except Exception as e:
                 logger.error("Error creating worker: %s", str(e))
                 self._handle_worker_error(str(e))
+
+    def delete_selected_data(self):
+        current_row = self.summaryTable.currentRow()
+        if current_row < 0:
+            QMessageBox.warning(self, "No Selection", "Please select a row from the summary table to delete.")
+            return
+
+        product = self.summaryTable.item(current_row, 0).text()
+        lot = self.summaryTable.item(current_row, 1).text()
+        insertion = self.summaryTable.item(current_row, 2).text()
+
+        reply = QMessageBox.question(
+            self,
+            "Confirm Deletion",
+            f"Are you sure you want to delete all reference data for:\n\nProduct: {product}\nLot: {lot}\nInsertion: {insertion}\n\nThis action cannot be undone.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+
+        if reply == QMessageBox.Yes:
+            self.set_loading_overlay("Deleting data...")
+            self.deleteBtn.setEnabled(False)
+            
+            worker = self.create_worker(self._async_delete_reference_data, 
+                                      product=product, lot=lot, insertion=insertion)
+            worker.finished.connect(self._handle_delete_complete)
+            worker.start()
+
+    async def _async_delete_reference_data(self, product, lot, insertion):
+        from api.client import APIClient
+        
+        worker_api_client = None
+        try:
+            worker_api_client = APIClient()
+            
+            ids_to_delete = []
+            for data in self.reference_data:
+                if (data.get('product', '').lower() == product.lower() and
+                    data.get('lot', '').lower() == lot.lower() and
+                    data.get('insertion', '').lower() == insertion.lower()):
+                    ids_to_delete.append(data.get('reference_id', ''))
+
+            deleted_count = 0
+            for ref_id in ids_to_delete:
+                try:
+                    await worker_api_client.delete_reference_data(ref_id)
+                    deleted_count += 1
+                except Exception as e:
+                    logger.error(f"Error deleting reference data {ref_id}: {e}")
+
+            return deleted_count
+            
+        except Exception as e:
+            logger.error(f"Error deleting reference data: {str(e)}")
+            raise
+        finally:
+            if worker_api_client:
+                try:
+                    await worker_api_client.close()
+                except Exception as e:
+                    logger.error(f"Error closing worker API client: {e}")
+
+    def _handle_delete_complete(self, deleted_count):
+        self.deleteBtn.setEnabled(True)
+        self.hide_loading_overlay()
+        
+        if deleted_count > 0:
+            self.add_status_message("Data Deletion", f"Successfully deleted {deleted_count} records")
+            self.load_reference_data()
+        else:
+            self.add_status_message("Data Deletion", "No records were deleted")
+
     def _handle_worker_error(self, error_msg):
-        """Handle worker errors"""
         logger.error("Worker error: %s", error_msg)
         self.show_error("Processing Error", error_msg)
         self.addDataBtn.setEnabled(True)
@@ -379,36 +553,46 @@ class RetrainingTab(QWidget):
         self._cleanup_current_worker()
 
     def _cleanup_current_worker(self):
-        """Safely clean up the current worker"""
         if self.current_worker:
             logger.debug("Cleaning up current worker")
             try:
-                self.current_worker.stop()
+                if self.current_worker.isRunning():
+                    self.current_worker.wait(3000)
                 self.current_worker.deleteLater()
             except Exception as e:
                 logger.error("Error cleaning up worker: %s", str(e))
             finally:
                 self.current_worker = None
 
-    async def _async_process_reference_data(self, file_path, product, lot, insertion):
-        """Async operation to process and upload reference data"""
+    async def _async_process_reference_data(self, file_path, product, lot, insertion, update_existing=False):
+        from api.client import APIClient
+        
+        worker_api_client = None
         try:
-            processor = EFFProcessor(self.api_client)
-            result = await processor.process_eff_file(file_path, product, lot, insertion)
-            await self.api_client.close() 
+            worker_api_client = APIClient()
+            processor = EFFProcessor(worker_api_client)
+            
+            logger.debug(f"Processing EFF file: {file_path} (update_existing: {update_existing})")
+            result = await processor.process_eff_file(file_path, product, lot, insertion, update_existing)
+            logger.debug(f"Processing completed successfully")
             return result
+            
         except Exception as e:
             logger.error("Error processing data: %s", str(e), exc_info=True)
-            await self.api_client.close() 
             raise
+        finally:
+            if worker_api_client:
+                try:
+                    await worker_api_client.close()
+                    logger.debug("Worker API client closed successfully")
+                except Exception as e:
+                    logger.error(f"Error closing worker API client: {e}")
 
     def _update_upload_progress(self, value, event, status):
-        """Update progress during upload"""
         self.progressBar.setValue(value)
         self.add_status_message(event, status)
 
     def _handle_upload_complete(self, result):
-        """Handle completion of upload"""
         logger.debug("Upload completed with result: %s", result)
         self.addDataBtn.setEnabled(True)
         self.progressBar.hide()
@@ -420,7 +604,14 @@ class RetrainingTab(QWidget):
         self._cleanup_current_worker()
 
     def start_retraining(self):
-        """Start model retraining"""
+        if not self.reference_data:
+            QMessageBox.warning(
+                self, 
+                "No Reference Data", 
+                "Cannot start retraining without reference data. Please upload reference data first."
+            )
+            return
+
         self.retrainBtn.setEnabled(False)
         worker = self.create_worker(self._async_start_retraining)
         worker.progress.connect(self._update_training_progress)
@@ -428,24 +619,33 @@ class RetrainingTab(QWidget):
         worker.start()
 
     async def _async_start_retraining(self):
-        """Async operation to start retraining"""
-        await self.api_client.start_model_retraining()
-        return True
+        from api.client import APIClient
+        
+        worker_api_client = None
+        try:
+            worker_api_client = APIClient()
+            await worker_api_client.start_model_retraining()
+            return True
+        except Exception as e:
+            logger.error(f"Error starting retraining: {str(e)}")
+            raise
+        finally:
+            if worker_api_client:
+                try:
+                    await worker_api_client.close()
+                except Exception as e:
+                    logger.error(f"Error closing worker API client: {e}")
 
     def _update_training_progress(self, value, event, status):
-        """Update progress during training"""
         self.progressBar.setValue(value)
         self.add_status_message(event, status)
 
     def _handle_training_complete(self):
-        """Handle completion of training"""
         self.retrainBtn.setEnabled(True)
         self.progressBar.hide()
         self.add_status_message("Training completed", "Success")
-        #self.load_model_checkpoints()
 
     def add_status_message(self, event: str, status: str):
-        """Add message to status table"""
         current_time = datetime.now().strftime("%H:%M:%S")
         row_position = self.statusTable.rowCount()
         self.statusTable.insertRow(row_position)
@@ -457,265 +657,463 @@ class RetrainingTab(QWidget):
         self.statusTable.scrollToBottom()
 
     def show_error(self, title: str, message: str):
-        """Show error message box"""
         QMessageBox.critical(self, title, str(message))
         self.add_status_message(f"Error: {title}", "Failed")
         print(f"Error: {title}\n{message}")
 
     def closeEvent(self, event):
-        """Handle widget close event"""
         logger.debug("Closing RetrainingTab")
+        
         self._cleanup_current_worker()
         
-        # Create a new event loop for cleanup
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
+        for worker in self.workers[:]:
+            try:
+                if worker.isRunning():
+                    worker.wait(2000)
+                worker.deleteLater()
+            except Exception as e:
+                logger.error(f"Error stopping worker: {str(e)}")
+        self.workers.clear()
         
         try:
-            # Run cleanup in the new loop
-            loop.run_until_complete(self.api_client.close())
+            import threading
+            
+            def close_main_api_client():
+                try:
+                    cleanup_loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(cleanup_loop)
+                    cleanup_loop.run_until_complete(self.api_client.close())
+                    cleanup_loop.close()
+                except Exception as e:
+                    logger.error("Error during main API client cleanup: %s", str(e))
+            
+            cleanup_thread = threading.Thread(target=close_main_api_client)
+            cleanup_thread.start()
+            cleanup_thread.join(timeout=1.0)
+            
         except Exception as e:
-            logger.error("Error during cleanup: %s", str(e))
-        finally:
-            loop.close()
-            event.accept()
+            logger.error("Error during cleanup thread: %s", str(e))
+        
+        event.accept()
 
     def initUI(self):
-        layout = QVBoxLayout(self)
+        # Create main scroll area
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        
+        # Create main content widget
+        content_widget = QWidget()
+        layout = QVBoxLayout(content_widget)
+        layout.setSpacing(15)
+        layout.setContentsMargins(15, 15, 15, 15)
 
-        # Model Checkpoints Section
-        checkpointFrame = QFrame()
-        checkpointFrame.setFrameStyle(QFrame.StyledPanel)
-        checkpointLayout = QVBoxLayout(checkpointFrame)
-        
-        checkpointLabel = QLabel("Model Checkpoints")
-        checkpointLabel.setFont(QFont("Arial", 12, QFont.Bold))
-        
-        self.checkpointCombo = QComboBox()
-        
-        checkpointLayout.addWidget(checkpointLabel)
-        checkpointLayout.addWidget(self.checkpointCombo)
-        layout.addWidget(checkpointFrame)
-
-        # Control Panel
-        controlPanel = QFrame()
-        controlPanel.setFrameStyle(QFrame.StyledPanel)
+        # Loading overlay label
+        self.loadingLabel = QLabel("⏳ Loading...")
+        self.loadingLabel.setAlignment(Qt.AlignCenter)
+        self.loadingLabel.setStyleSheet("""
+            QLabel {
+                background-color: rgba(52, 73, 94, 0.9);
+                color: white;
+                font-size: 16px;
+                font-weight: bold;
+                padding: 20px;
+                border-radius: 10px;
+                margin: 10px;
+            }
+        """)
+        self.loadingLabel.hide()
+        controlPanel = QGroupBox("Training Controls")
+        controlPanel.setStyleSheet("""
+            QGroupBox {
+                font-weight: bold;
+                border: 2px solid #bdc3c7;
+                border-radius: 8px;
+                margin-top: 10px;
+                padding-top: 10px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 5px 0 5px;
+            }
+        """)
         controlLayout = QHBoxLayout(controlPanel)
 
-        # Add Data Button
-        self.addDataBtn = QPushButton("Add Reference Data")
+        self.addDataBtn = QPushButton("📁 Add Reference Data")
         self.addDataBtn.setStyleSheet("""
             QPushButton {
-                background-color: #28a745;
+                background-color: #27ae60;
                 color: white;
-                padding: 10px;
-                border-radius: 5px;
+                padding: 12px 20px;
+                border-radius: 8px;
                 font-weight: bold;
+                font-size: 14px;
             }
             QPushButton:hover {
-                background-color: #218838;
+                background-color: #229954;
             }
             QPushButton:disabled {
-                background-color: #cccccc;
+                background-color: #95a5a6;
             }
         """)
         self.addDataBtn.clicked.connect(self.add_reference_data)
         controlLayout.addWidget(self.addDataBtn)
 
-        # Retrain Button
-        self.retrainBtn = QPushButton("Start Retraining")
-        self.retrainBtn.setStyleSheet("""
+        self.deleteBtn = QPushButton("🗑️ Delete Selected")
+        self.deleteBtn.setStyleSheet("""
             QPushButton {
-                background-color: #1849D6;
+                background-color: #e74c3c;
                 color: white;
-                padding: 10px;
-                border-radius: 5px;
+                padding: 12px 20px;
+                border-radius: 8px;
                 font-weight: bold;
+                font-size: 14px;
             }
             QPushButton:hover {
-                background-color: #1438A8;
+                background-color: #c0392b;
             }
             QPushButton:disabled {
-                background-color: #cccccc;
+                background-color: #95a5a6;
+            }
+        """)
+        self.deleteBtn.clicked.connect(self.delete_selected_data)
+        controlLayout.addWidget(self.deleteBtn)
+
+        self.retrainBtn = QPushButton("🚀 Start Retraining")
+        self.retrainBtn.setStyleSheet("""
+            QPushButton {
+                background-color: #3498db;
+                color: white;
+                padding: 12px 20px;
+                border-radius: 8px;
+                font-weight: bold;
+                font-size: 14px;
+            }
+            QPushButton:hover {
+                background-color: #2980b9;
+            }
+            QPushButton:disabled {
+                background-color: #95a5a6;
             }
         """)
         self.retrainBtn.clicked.connect(self.start_retraining)
         controlLayout.addWidget(self.retrainBtn)
 
-        # Schedule Section
-        scheduleLayout = QVBoxLayout()
-        scheduleLabel = QLabel("Automated Schedule:")
-        scheduleLabel.setStyleSheet("font-weight: bold;")
+        controlLayout.addStretch()
+
+        scheduleGroup = QVBoxLayout()
+        scheduleLabel = QLabel("Schedule:")
+        scheduleLabel.setStyleSheet("font-weight: bold; color: #34495e;")
         self.scheduleCombo = QComboBox()
-        self.scheduleCombo.addItems(["Daily", "Weekly", "Monthly", "Custom"])
+        self.scheduleCombo.addItems(["Manual", "Daily", "Weekly", "Monthly"])
         self.scheduleCombo.setStyleSheet("""
             QComboBox {
-                padding: 5px;
-                border: 1px solid #ccc;
-                border-radius: 3px;
-                min-width: 100px;
+                padding: 8px;
+                border: 2px solid #bdc3c7;
+                border-radius: 6px;
+                background-color: white;
+                min-width: 120px;
+            }
+            QComboBox:focus {
+                border-color: #3498db;
             }
         """)
-        scheduleLayout.addWidget(scheduleLabel)
-        scheduleLayout.addWidget(self.scheduleCombo)
-        controlLayout.addLayout(scheduleLayout)
+        scheduleGroup.addWidget(scheduleLabel)
+        scheduleGroup.addWidget(self.scheduleCombo)
+        controlLayout.addLayout(scheduleGroup)
 
         layout.addWidget(controlPanel)
 
-        # Progress Section
-        progressFrame = QFrame()
-        progressFrame.setFrameStyle(QFrame.StyledPanel)
+        progressFrame = QGroupBox("Processing Progress")
+        progressFrame.setStyleSheet("""
+            QGroupBox {
+                font-weight: bold;
+                border: 2px solid #bdc3c7;
+                border-radius: 8px;
+                margin-top: 10px;
+                padding-top: 10px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 5px 0 5px;
+            }
+        """)
         progressLayout = QVBoxLayout(progressFrame)
 
-        self.progressLabel = QLabel("Processing Progress")
-        self.progressLabel.setStyleSheet("font-weight: bold;")
         self.progressBar = QProgressBar()
         self.progressBar.setStyleSheet("""
             QProgressBar {
-                border: 1px solid #ccc;
-                border-radius: 5px;
+                border: 2px solid #bdc3c7;
+                border-radius: 8px;
                 text-align: center;
-                height: 20px;
+                height: 25px;
+                background-color: #ecf0f1;
             }
             QProgressBar::chunk {
-                background-color: #1849D6;
-                border-radius: 5px;
+                background-color: #3498db;
+                border-radius: 6px;
             }
         """)
         self.progressBar.setValue(0)
         self.progressBar.hide()
-        progressLayout.addWidget(self.progressLabel)
         progressLayout.addWidget(self.progressBar)
 
         layout.addWidget(progressFrame)
 
-        # Add Filter Section
-        filterFrame = QFrame()
-        filterFrame.setFrameStyle(QFrame.StyledPanel)
-        filterLayout = QHBoxLayout(filterFrame)
+        filterFrame = QGroupBox("Data Filters")
+        filterFrame.setStyleSheet("""
+            QGroupBox {
+                font-weight: bold;
+                border: 2px solid #bdc3c7;
+                border-radius: 8px;
+                margin-top: 10px;
+                padding-top: 10px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 5px 0 5px;
+            }
+        """)
+        filterLayout = QGridLayout(filterFrame)
 
-        # Product Filter
+        filter_style = """
+            QComboBox {
+                padding: 6px;
+                border: 2px solid #bdc3c7;
+                border-radius: 6px;
+                background-color: white;
+                min-width: 120px;
+            }
+            QComboBox:focus {
+                border-color: #3498db;
+            }
+        """
+
         productLabel = QLabel("Product:")
+        productLabel.setStyleSheet("font-weight: bold; color: #34495e;")
         self.productFilter = QComboBox()
         self.productFilter.setEditable(True)
+        self.productFilter.setStyleSheet(filter_style)
         self.productFilter.currentTextChanged.connect(lambda: self.apply_filters())
-        filterLayout.addWidget(productLabel)
-        filterLayout.addWidget(self.productFilter)
+        filterLayout.addWidget(productLabel, 0, 0)
+        filterLayout.addWidget(self.productFilter, 0, 1)
 
-        # Lot Filter
         lotLabel = QLabel("Lot:")
+        lotLabel.setStyleSheet("font-weight: bold; color: #34495e;")
         self.lotFilter = QComboBox()
         self.lotFilter.setEditable(True)
+        self.lotFilter.setStyleSheet(filter_style)
         self.lotFilter.currentTextChanged.connect(lambda: self.apply_filters())
-        filterLayout.addWidget(lotLabel)
-        filterLayout.addWidget(self.lotFilter)
+        filterLayout.addWidget(lotLabel, 0, 2)
+        filterLayout.addWidget(self.lotFilter, 0, 3)
 
-        # Test Name Filter
         testLabel = QLabel("Test Name:")
+        testLabel.setStyleSheet("font-weight: bold; color: #34495e;")
         self.testFilter = QComboBox()
         self.testFilter.setEditable(True)
+        self.testFilter.setStyleSheet(filter_style)
         self.testFilter.currentTextChanged.connect(lambda: self.apply_filters())
-        filterLayout.addWidget(testLabel)
-        filterLayout.addWidget(self.testFilter)
+        filterLayout.addWidget(testLabel, 1, 0)
+        filterLayout.addWidget(self.testFilter, 1, 1)
 
-        # Insertion Filter
         insertionLabel = QLabel("Insertion:")
+        insertionLabel.setStyleSheet("font-weight: bold; color: #34495e;")
         self.insertionFilter = QComboBox()
         self.insertionFilter.setEditable(True)
+        self.insertionFilter.setStyleSheet(filter_style)
         self.insertionFilter.currentTextChanged.connect(lambda: self.apply_filters())
-        filterLayout.addWidget(insertionLabel)
-        filterLayout.addWidget(self.insertionFilter)
+        filterLayout.addWidget(insertionLabel, 1, 2)
+        filterLayout.addWidget(self.insertionFilter, 1, 3)
 
-        # Clear Filters Button
-        self.clearFiltersBtn = QPushButton("Clear Filters")
+        self.clearFiltersBtn = QPushButton("Clear All Filters")
         self.clearFiltersBtn.clicked.connect(self.clear_filters)
         self.clearFiltersBtn.setStyleSheet("""
             QPushButton {
-                background-color: #dc3545;
+                background-color: #f39c12;
                 color: white;
-                padding: 5px 10px;
-                border-radius: 3px;
+                padding: 8px 16px;
+                border-radius: 6px;
+                font-weight: bold;
             }
             QPushButton:hover {
-                background-color: #c82333;
+                background-color: #e67e22;
             }
         """)
-        filterLayout.addWidget(self.clearFiltersBtn)
+        filterLayout.addWidget(self.clearFiltersBtn, 1, 4)
 
         layout.addWidget(filterFrame)
 
+        dataTabWidget = QTabWidget()
+        dataTabWidget.setStyleSheet("""
+            QTabWidget::pane {
+                border: 2px solid #bdc3c7;
+                border-radius: 8px;
+                background-color: white;
+            }
+            QTabBar::tab {
+                background-color: #ecf0f1;
+                padding: 10px 20px;
+                margin-right: 2px;
+                border-top-left-radius: 6px;
+                border-top-right-radius: 6px;
+            }
+            QTabBar::tab:selected {
+                background-color: #3498db;
+                color: white;
+                font-weight: bold;
+            }
+            QTabBar::tab:hover:!selected {
+                background-color: #d5dbdb;
+            }
+        """)
 
-        # Reference Data Table
-        referenceFrame = QFrame()
-        referenceFrame.setFrameStyle(QFrame.StyledPanel)
-        referenceLayout = QVBoxLayout(referenceFrame)
+        summaryWidget = QWidget()
+        summaryLayout = QVBoxLayout(summaryWidget)
 
-        referenceLabel = QLabel("Reference Data")
-        referenceLabel.setFont(QFont("Arial", 12, QFont.Bold))
-        referenceLayout.addWidget(referenceLabel)
+        summaryLabel = QLabel("📊 Data Summary by Product/Lot/Insertion")
+        summaryLabel.setFont(QFont("Arial", 12, QFont.Bold))
+        summaryLabel.setStyleSheet("color: #2c3e50; margin-bottom: 10px;")
+        summaryLayout.addWidget(summaryLabel)
 
-        self.referenceTable = QTableWidget()
-        self.referenceTable.setColumnCount(8)
-        self.referenceTable.setHorizontalHeaderLabels([
-            "Product", "Lot", "Insertion", "Test Name", 
-            "Test Number", "LSL", "USL", "Created At"
-        ])
-        self.referenceTable.setStyleSheet("""
+        self.summaryTable = QTableWidget()
+        self.summaryTable.setStyleSheet("""
             QTableWidget {
-                border: 1px solid #ccc;
-                border-radius: 5px;
-                gridline-color: #f0f0f0;
+                border: 1px solid #bdc3c7;
+                border-radius: 6px;
+                gridline-color: #ecf0f1;
+                background-color: white;
+                selection-background-color: #3498db;
             }
             QHeaderView::section {
-                background-color: #f8f9fa;
-                padding: 6px;
-                border: 1px solid #ddd;
+                background-color: #34495e;
+                color: white;
+                padding: 8px;
+                border: 1px solid #2c3e50;
                 font-weight: bold;
             }
             QTableWidget::item {
-                padding: 5px;
+                padding: 8px;
+                border-bottom: 1px solid #ecf0f1;
+            }
+            QTableWidget::item:selected {
+                background-color: #3498db;
+                color: white;
             }
         """)
-        self.referenceTable.horizontalHeader().setStretchLastSection(True)
+        self.summaryTable.setSelectionBehavior(QTableWidget.SelectRows)
+        self.summaryTable.setAlternatingRowColors(True)
+        self.summaryTable.horizontalHeader().setStretchLastSection(True)
+        summaryLayout.addWidget(self.summaryTable)
+
+        detailWidget = QWidget()
+        detailLayout = QVBoxLayout(detailWidget)
+
+        detailLabel = QLabel("📋 Detailed Reference Data")
+        detailLabel.setFont(QFont("Arial", 12, QFont.Bold))
+        detailLabel.setStyleSheet("color: #2c3e50; margin-bottom: 10px;")
+        detailLayout.addWidget(detailLabel)
+
+        self.referenceTable = QTableWidget()
+        self.referenceTable.setStyleSheet("""
+            QTableWidget {
+                border: 1px solid #bdc3c7;
+                border-radius: 6px;
+                gridline-color: #ecf0f1;
+                background-color: white;
+                selection-background-color: #3498db;
+            }
+            QHeaderView::section {
+                background-color: #34495e;
+                color: white;
+                padding: 8px;
+                border: 1px solid #2c3e50;
+                font-weight: bold;
+            }
+            QTableWidget::item {
+                padding: 8px;
+                border-bottom: 1px solid #ecf0f1;
+            }
+            QTableWidget::item:selected {
+                background-color: #3498db;
+                color: white;
+            }
+        """)
         self.referenceTable.setSelectionBehavior(QTableWidget.SelectRows)
         self.referenceTable.setAlternatingRowColors(True)
-        referenceLayout.addWidget(self.referenceTable)
-        layout.addWidget(referenceFrame)
+        self.referenceTable.horizontalHeader().setStretchLastSection(True)
+        detailLayout.addWidget(self.referenceTable)
 
-        # Status Table
-        statusFrame = QFrame()
-        statusFrame.setFrameStyle(QFrame.StyledPanel)
+        dataTabWidget.addTab(summaryWidget, "📊 Summary")
+        dataTabWidget.addTab(detailWidget, "📋 Details")
+
+        layout.addWidget(dataTabWidget)
+
+        statusFrame = QGroupBox("Operation Status")
+        statusFrame.setStyleSheet("""
+            QGroupBox {
+                font-weight: bold;
+                border: 2px solid #bdc3c7;
+                border-radius: 8px;
+                margin-top: 10px;
+                padding-top: 10px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 5px 0 5px;
+            }
+        """)
         statusLayout = QVBoxLayout(statusFrame)
-
-        statusLabel = QLabel("Operation Status")
-        statusLabel.setFont(QFont("Arial", 12, QFont.Bold))
-        statusLayout.addWidget(statusLabel)
 
         self.statusTable = QTableWidget()
         self.statusTable.setColumnCount(3)
         self.statusTable.setHorizontalHeaderLabels(["Time", "Event", "Status"])
+        self.statusTable.setMaximumHeight(150)
         self.statusTable.setStyleSheet("""
             QTableWidget {
-                border: 1px solid #ccc;
-                border-radius: 5px;
-                gridline-color: #f0f0f0;
+                border: 1px solid #bdc3c7;
+                border-radius: 6px;
+                gridline-color: #ecf0f1;
+                background-color: white;
             }
             QHeaderView::section {
-                background-color: #f8f9fa;
+                background-color: #95a5a6;
+                color: white;
                 padding: 6px;
-                border: 1px solid #ddd;
+                border: 1px solid #7f8c8d;
                 font-weight: bold;
             }
             QTableWidget::item {
-                padding: 5px;
+                padding: 6px;
+                border-bottom: 1px solid #ecf0f1;
             }
         """)
         self.statusTable.horizontalHeader().setStretchLastSection(True)
         self.statusTable.setSelectionBehavior(QTableWidget.SelectRows)
         self.statusTable.setAlternatingRowColors(True)
         statusLayout.addWidget(self.statusTable)
+
         layout.addWidget(statusFrame)
 
-        # Set overall layout margins and spacing
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(10)
+        # Set the content widget to the scroll area
+        scroll_area.setWidget(content_widget)
+        
+        # Create the main layout for the widget
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.addWidget(scroll_area)
+        
+        # Add loading overlay on top
+        overlay_layout = QVBoxLayout()
+        overlay_layout.addWidget(self.loadingLabel, alignment=Qt.AlignCenter)
+        main_layout.addLayout(overlay_layout)
+
+        self.setStyleSheet("""
+            QScrollArea {
+                border: none;
+            }
+        """)

@@ -21640,6 +21640,7 @@
             |-- man1
                 |-- ttx.1
 |-- frontend
+    |-- .env
     |-- api
         |-- client.py
         |-- feedback_client.py
@@ -21666,6 +21667,10 @@
             |-- __init__.cpython-311.pyc
             |-- __init__.cpython-312.pyc
             |-- __init__.cpython-313.pyc
+    |-- config
+        |-- api_config.py
+        |-- __pycache__
+            |-- api_config.cpython-311.pyc
     |-- env
         |-- .gitignore
         |-- Include

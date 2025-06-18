@@ -17,7 +17,6 @@ class FeedbackMetricWidget(QFrame):
         super().__init__()
         self.setStyleSheet("""
             QFrame {
-                background-color: #ffffff;
                 border-radius: 16px;
                 border: 1px solid #e5e7eb;
                 min-width: 150px;
@@ -128,7 +127,7 @@ class FeedbackTab(QWidget):
         search_container = QFrame()
         search_container.setStyleSheet("""
             QFrame {
-                background-color: rgba(24, 73, 214, 0.08);
+
                 border-radius: 19px;
                 padding: 5px 15px;
             }

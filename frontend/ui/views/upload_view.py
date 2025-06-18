@@ -138,6 +138,7 @@ class UploadPage(QWidget):
     def initUI(self):
         self.setFixedWidth(480)
         self.setMinimumHeight(700)
+        self.setAcceptDrops(True)
         
         mainLayout = QVBoxLayout(self)
         mainLayout.setContentsMargins(0, 0, 0, 0)
@@ -232,7 +233,7 @@ class UploadPage(QWidget):
         mainLayout.addWidget(headerWidget)
 
     def setupDragDropSection(self, mainLayout):
-        self.dragDropSection = QLabel()
+        self.dragDropSection = QWidget()
         self.dragDropSection.setStyleSheet("""
             border: 2px dashed #1849D6;
             background-color: white;
@@ -617,14 +618,27 @@ class UploadPage(QWidget):
 
     def dragEnterEvent(self, event: QDragEnterEvent):
         if event.mimeData().hasUrls():
-            event.acceptProposedAction()
+            urls = event.mimeData().urls()
+            for url in urls:
+                file_path = url.toLocalFile()
+                if file_path.endswith(('.eff', '.tsf', '.zip')):
+                    event.acceptProposedAction()
+                    return
+        event.ignore()
 
     def dropEvent(self, event: QDropEvent):
+        files_added = False
         for url in event.mimeData().urls():
             file_path = url.toLocalFile()
             if file_path.endswith(('.eff', '.tsf', '.zip')):
-                self.addFile(file_path)
-        self.proceedButton.setEnabled(True)
+                existing_paths = [path for path, _ in self.uploaded_files]
+                if file_path not in existing_paths:
+                    self.addFile(file_path)
+                    files_added = True
+        
+        if files_added:
+            self.proceedButton.setEnabled(True)
+        event.acceptProposedAction()
 
     def openFileDialog(self, event):
         options = QFileDialog.Options()
@@ -636,12 +650,22 @@ class UploadPage(QWidget):
             options=options
         )
         if files:
-            self.proceedButton.setEnabled(True)
+            files_added = False
             for file in files:
-                self.addFile(file)
+                existing_paths = [path for path, _ in self.uploaded_files]
+                if file not in existing_paths:
+                    self.addFile(file)
+                    files_added = True
+            
+            if files_added:
+                self.proceedButton.setEnabled(True)
 
     def addFile(self, filePath):
         if os.path.isfile(filePath):
+            existing_paths = [path for path, _ in self.uploaded_files]
+            if filePath in existing_paths:
+                return
+                
             fileName = os.path.basename(filePath)
             fileSize = os.path.getsize(filePath) / 1024.0
             fileLayout = QHBoxLayout()
