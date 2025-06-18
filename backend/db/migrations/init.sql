@@ -151,3 +151,53 @@ BEGIN
     RETURN f != f;
 END;
 $$ LANGUAGE plpgsql IMMUTABLE;
+
+-- Add sensitivity column to model_settings table
+ALTER TABLE model_settings 
+ADD COLUMN IF NOT EXISTS sensitivity FLOAT DEFAULT 0.5 CHECK (sensitivity >= 0 AND sensitivity <= 1);
+
+-- Add selected_products column to store array of selected products
+ALTER TABLE model_settings 
+ADD COLUMN IF NOT EXISTS selected_products TEXT[] DEFAULT '{}';
+
+-- Remove or deprecate core model related columns if they exist
+ALTER TABLE model_settings 
+DROP COLUMN IF EXISTS core_model CASCADE;
+
+-- Create or update the model_settings table if it doesn't exist
+CREATE TABLE IF NOT EXISTS model_settings (
+    id SERIAL PRIMARY KEY,
+    sensitivity FLOAT DEFAULT 0.5 CHECK (sensitivity >= 0 AND sensitivity <= 1),
+    selected_products TEXT[] DEFAULT '{}',
+    confidence_threshold FLOAT DEFAULT 0.95,
+    critical_issue_weight FLOAT DEFAULT 1.0,
+    high_priority_weight FLOAT DEFAULT 0.8,
+    normal_priority_weight FLOAT DEFAULT 0.6,
+    auto_retrain BOOLEAN DEFAULT FALSE,
+    retraining_schedule VARCHAR(50) DEFAULT 'weekly',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Create index for better performance
+CREATE INDEX IF NOT EXISTS idx_model_settings_created_at ON model_settings(created_at DESC);
+
+-- Insert default settings if table is empty
+INSERT INTO model_settings (sensitivity, selected_products)
+SELECT 0.5, '{}'
+WHERE NOT EXISTS (SELECT 1 FROM model_settings);
+
+-- Create or update trigger to automatically update the updated_at timestamp
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = CURRENT_TIMESTAMP;
+    RETURN NEW;
+END;
+$$ language 'plpgsql';
+
+DROP TRIGGER IF EXISTS update_model_settings_updated_at ON model_settings;
+CREATE TRIGGER update_model_settings_updated_at 
+BEFORE UPDATE ON model_settings 
+FOR EACH ROW 
+EXECUTE FUNCTION update_updated_at_column();

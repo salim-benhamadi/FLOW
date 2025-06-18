@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from .routers import analyze, feedback, metrics, configurations, reference, input
+from .routers import analyze, feedback, metrics, configurations, reference, input, settings
 
 # Create the main v1 router
 router = APIRouter()

@@ -21647,6 +21647,7 @@
         |-- input_client.py
         |-- metric_client.py
         |-- reference_client.py
+        |-- settings_client.py
         |-- __init__.py
         |-- __pycache__
             |-- client.cpython-311.pyc
@@ -21664,6 +21665,7 @@
             |-- reference_client.cpython-311.pyc
             |-- reference_client.cpython-312.pyc
             |-- reference_client.cpython-313.pyc
+            |-- settings_client.cpython-311.pyc
             |-- __init__.cpython-311.pyc
             |-- __init__.cpython-312.pyc
             |-- __init__.cpython-313.pyc
