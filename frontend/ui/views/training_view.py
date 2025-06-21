@@ -573,7 +573,7 @@ class RetrainingTab(QWidget):
             processor = EFFProcessor(worker_api_client)
             
             logger.debug(f"Processing EFF file: {file_path} (update_existing: {update_existing})")
-            result = await processor.process_eff_file(file_path, product, lot, insertion, update_existing)
+            result = await processor.process_eff_file(file_path, product, lot, insertion)
             logger.debug(f"Processing completed successfully")
             return result
             

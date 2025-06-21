@@ -7,9 +7,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont, QPixmap
 from pathlib import Path
 from api.settings_client import SettingsClient
-
-def resource_path(relative_path):
-    return str(Path(__file__).parent.parent.parent / relative_path)
+from ui.utils.PathResources import resource_path
 
 class SettingPage(QWidget):
     show_upload_signal = Signal()
@@ -43,6 +41,8 @@ class SettingPage(QWidget):
                 color: white;
                 border-radius: 5px;
                 padding: 5px 15px;
+                margin-left: 10px;
+                margin-right: 10px;
             }
             QPushButton:hover {
                 background-color: #1440A0;
@@ -117,45 +117,18 @@ class SettingPage(QWidget):
         mainLayout.addWidget(sensitivityLabel)
 
         sensitivityLayout = QVBoxLayout()
-        
         self.sensitivity_slider = QSlider(Qt.Horizontal)
         self.sensitivity_slider.setRange(0, 10)
         self.sensitivity_slider.setValue(5)
         self.sensitivity_slider.setTickPosition(QSlider.TicksBelow)
         self.sensitivity_slider.setTickInterval(1)
-        self.sensitivity_slider.setStyleSheet("""
-            QSlider::groove:horizontal {
-                border: 1px solid #999999;
-                height: 8px;
-                background: #E0E0E0;
-                margin: 2px 0;
-                border-radius: 4px;
-            }
-            QSlider::handle:horizontal {
-                background: #1849D6;
-                border: 1px solid #1440A0;
-                width: 18px;
-                margin: -5px 0;
-                border-radius: 9px;
-            }
-            QSlider::tick:horizontal {
-                width: 2px;
-                height: 10px;
-                background: #999999;
-            }
-        """)
         self.sensitivity_slider.valueChanged.connect(self.on_sensitivity_changed)
-        
+        self.sensitivity_slider.setStyleSheet("""border:none;""")
         slider_labels_layout = QHBoxLayout()
-        for i in range(11):
-            label = QLabel(str(i/10))
-            label.setAlignment(Qt.AlignCenter)
-            label.setStyleSheet("font-size: 10px; color: #666666;")
-            slider_labels_layout.addWidget(label)
-        
+    
         self.sensitivity_value_label = QLabel("Current value: 0.5")
         self.sensitivity_value_label.setAlignment(Qt.AlignCenter)
-        self.sensitivity_value_label.setStyleSheet("font-weight: bold; margin-top: 10px;")
+        self.sensitivity_value_label.setStyleSheet("border:none")
         
         sensitivityLayout.addWidget(self.sensitivity_slider)
         sensitivityLayout.addLayout(slider_labels_layout)

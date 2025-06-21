@@ -4,7 +4,7 @@ import asyncio
 from datetime import datetime
 import logging
 from pathlib import Path
-from config.api_config import (
+from resources.config.api_config import (
     get_api_base_url, 
     get_api_timeout, 
     get_api_verify_ssl, 
