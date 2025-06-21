@@ -3,17 +3,34 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout,
                                QButtonGroup, QFileDialog, QMessageBox,
                                QLineEdit, QListWidget, QListWidgetItem,
                                QScrollArea, QTreeWidget, QTreeWidgetItem,
-                               QFrame, QCheckBox, QGroupBox)
-from PySide6.QtCore import Qt, Signal, QMimeData, QSize
-from PySide6.QtGui import QFont, QPixmap, QDragEnterEvent, QDropEvent, QPainter, QBrush, QColor
+                               QFrame, QCheckBox, QGroupBox, QProgressBar,
+                               QToolButton)
+from PySide6.QtCore import Qt, Signal, QMimeData, QSize, QThread
+from PySide6.QtGui import QFont, QPixmap, QDragEnterEvent, QDropEvent, QPainter, QBrush, QColor, QIcon
 import os
 from pathlib import Path
 from api.settings_client import SettingsClient
 from api.reference_data_client import ReferenceDataClient
 from ui.utils.PathResources import resource_path
 
+class LoadCloudDataWorker(QThread):
+    """Worker thread for loading cloud data"""
+    finished = Signal(dict)
+    error = Signal(str)
+    
+    def __init__(self, reference_client):
+        super().__init__()
+        self.reference_client = reference_client
+    
+    def run(self):
+        try:
+            data = self.reference_client.get_reference_data_structure()
+            self.finished.emit(data)
+        except Exception as e:
+            self.error.emit(str(e))
+
 class DragDropArea(QFrame):
-    """Custom drag and drop area widget"""
+    """Custom drag and drop area widget matching upload page style"""
     files_dropped = Signal(list)
     
     def __init__(self):
@@ -36,31 +53,35 @@ class DragDropArea(QFrame):
         iconPixmap = iconPixmap.scaled(30, 30, Qt.KeepAspectRatio, Qt.SmoothTransformation)
         uploadIcon.setPixmap(iconPixmap)
         uploadIcon.setAlignment(Qt.AlignCenter)
+        uploadIcon.setStyleSheet("border: none;")
         
         # Upload text
-        uploadText = QLabel("Drag and drop reference files here")
+        uploadText = QLabel('Drag your reference file(s) or <span style="color:#1849D6;">browse</span>')
         uploadText.setAlignment(Qt.AlignCenter)
         uploadText.setStyleSheet("color: #666666; border: none;")
         
-        # Browse button
-        self.browseButton = QPushButton("Browse Files")
-        self.browseButton.setStyleSheet("""
-            QPushButton {
-                background-color: #1849D6;
-                color: white;
-                border-radius: 5px;
-                padding: 5px 15px;
-                border: none;
-                max-width: 150px;
-            }
-            QPushButton:hover {
-                background-color: #1440A0;
-            }
-        """)
+        layout.addStretch()
+        layout.addWidget(uploadIcon, alignment=Qt.AlignCenter)
+        layout.addWidget(uploadText, alignment=Qt.AlignCenter)
+        layout.addStretch()
         
-        layout.addWidget(uploadIcon)
-        layout.addWidget(uploadText)
-        layout.addWidget(self.browseButton, alignment=Qt.AlignCenter)
+        # Make the entire area clickable
+        self.mousePressEvent = self.on_click
+    
+    def on_click(self, event):
+        """Handle click to browse files"""
+        self.browse_files()
+    
+    def browse_files(self):
+        """Open file dialog"""
+        files, _ = QFileDialog.getOpenFileNames(
+            self,
+            "Select Reference Files",
+            "",
+            "Data Files (*.eff *.tsf *.zip)"
+        )
+        if files:
+            self.files_dropped.emit(files)
     
     def dragEnterEvent(self, event: QDragEnterEvent):
         if event.mimeData().hasUrls():
@@ -93,17 +114,18 @@ class FileItemWidget(QWidget):
         
         # File icon
         iconLabel = QLabel()
-        # Try to load file icon, fall back to a simple colored box if not found
         try:
-            iconPixmap = QPixmap(resource_path('./resources/icons/file.png'))
-            iconPixmap = iconPixmap.scaled(30, 30, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            icon_path = self.get_icon_path(self.file_path)
+            iconPixmap = QPixmap(icon_path)
+            iconPixmap = iconPixmap.scaled(40, 40, Qt.KeepAspectRatio, Qt.SmoothTransformation)
             iconLabel.setPixmap(iconPixmap)
         except:
             # Fallback: create a simple colored rectangle as file icon
-            iconPixmap = QPixmap(30, 30)
+            iconPixmap = QPixmap(40, 40)
             iconPixmap.fill(QColor("#1849D6"))
             iconLabel.setPixmap(iconPixmap)
-            iconLabel.setStyleSheet("border-radius: 5px;")
+        
+        iconLabel.setStyleSheet("border: none;")
         
         # File info layout
         infoLayout = QVBoxLayout()
@@ -111,29 +133,27 @@ class FileItemWidget(QWidget):
         
         # File name
         fileName = QLabel(os.path.basename(self.file_path))
-        fileName.setStyleSheet("font-weight: bold; color: #333333;")
+        fileName.setStyleSheet("font-weight: bold; color: #333333; border: none;")
         
         # File size
-        file_size = os.path.getsize(self.file_path) / (1024 * 1024)  # Convert to MB
-        sizeLabel = QLabel(f"{file_size:.2f} MB")
-        sizeLabel.setStyleSheet("color: #666666; font-size: 10px;")
+        try:
+            file_size = os.path.getsize(self.file_path) / (1024 * 1024)  # Convert to MB
+            sizeLabel = QLabel(f"{file_size:.2f} MB")
+        except:
+            sizeLabel = QLabel("Unknown size")
+        sizeLabel.setStyleSheet("color: #666666; font-size: 10px; border: none;")
         
         infoLayout.addWidget(fileName)
         infoLayout.addWidget(sizeLabel)
         
         # Remove button
-        removeBtn = QPushButton("✕")
+        removeBtn = QPushButton()
+        removeBtn.setIcon(QPixmap(resource_path('./resources/icons/delete.png')).scaled(
+            20, 20, Qt.KeepAspectRatio, Qt.SmoothTransformation))
         removeBtn.setFixedSize(25, 25)
         removeBtn.setStyleSheet("""
             QPushButton {
-                background-color: #FF4444;
-                color: white;
-                border-radius: 12px;
-                font-weight: bold;
                 border: none;
-            }
-            QPushButton:hover {
-                background-color: #CC0000;
             }
         """)
         removeBtn.clicked.connect(lambda: self.remove_clicked.emit(self.file_path))
@@ -143,14 +163,26 @@ class FileItemWidget(QWidget):
         layout.addStretch()
         layout.addWidget(removeBtn)
         
-        # Container styling
+        # Container styling matching upload page
         self.setStyleSheet("""
             FileItemWidget {
-                background-color: #F5F5F5;
+                background-color: white;
+                border: 1px solid #E0E0E0;
                 border-radius: 5px;
+                max-height: 60px;
                 margin: 2px;
             }
         """)
+    
+    def get_icon_path(self, filePath):
+        """Get appropriate icon for file type"""
+        if filePath.endswith('.zip'):
+            return resource_path('./resources/icons/ZIP.png')
+        elif filePath.endswith('.eff'):
+            return resource_path('./resources/icons/EFF.png')
+        elif filePath.endswith('.tsf'):
+            return resource_path('./resources/icons/TSF.png')
+        return resource_path('./resources/icons/default.png')
 
 class ReferenceSelectionPage(QWidget):
     show_upload_signal = Signal()
@@ -165,6 +197,7 @@ class ReferenceSelectionPage(QWidget):
         self.selected_products = []
         self.selected_lots = {}
         self.selected_insertions = {}
+        self.cloud_worker = None
         self.initUI()
     
     def initUI(self):
@@ -278,6 +311,38 @@ class ReferenceSelectionPage(QWidget):
         self.cloudRadio = QRadioButton("Use reference data from cloud")
         self.cloudRadio.toggled.connect(self.onSourceChanged)
         
+        # Apply checkbox styling to radio buttons
+        radio_style = """
+            QRadioButton {
+                border: none;
+                margin-bottom: 10px;
+            }
+            QRadioButton::indicator {
+                width: 15px;
+                height: 15px;
+                border: 1px solid #DADEE8;
+                border-radius: 7px;
+                background-color: white;
+            }
+            QRadioButton::indicator:checked {
+                background-color: #1849D6;
+                border: 1px solid #1849D6;
+            }
+            QRadioButton::indicator:checked::after {
+                content: '';
+                width: 6px;
+                height: 6px;
+                border-radius: 3px;
+                background-color: white;
+                position: absolute;
+                top: 4px;
+                left: 4px;
+            }
+        """
+        
+        self.localRadio.setStyleSheet(radio_style)
+        self.cloudRadio.setStyleSheet(radio_style)
+        
         self.sourceGroup.addButton(self.localRadio)
         self.sourceGroup.addButton(self.cloudRadio)
         
@@ -299,89 +364,106 @@ class ReferenceSelectionPage(QWidget):
             self.showCloudSelectionInterface()
     
     def showLocalUploadInterface(self):
-        # Drag and drop area
+        # Drag and drop area matching upload page
         self.dragDropArea = DragDropArea()
         self.dragDropArea.files_dropped.connect(self.addReferenceFiles)
-        self.dragDropArea.browseButton.clicked.connect(self.browseFiles)
         self.contentLayout.addWidget(self.dragDropArea)
         
-        # Files section with same design as upload page
-        filesSection = QWidget()
-        filesSection.setStyleSheet("""
-            QWidget {
-                background-color: #F8F9FA;
+        # Support message matching upload page
+        message = QLabel("Only support .eff, .tsf, and .zip files")
+        message.setStyleSheet("color: gray; margin-top: 0px; margin-bottom: 10px;")
+        self.contentLayout.addWidget(message)
+        
+        # Clear All button matching upload page
+        self.clearFilesButton = QPushButton("Clear All")
+        self.clearFilesButton.setStyleSheet("""
+            QPushButton {
+                background-color: transparent;
+                color: #FF0000;
+                border: 1px solid #FF0000;
                 border-radius: 5px;
-                padding: 10px;
-                margin-top: 10px;
+                padding: 5px 15px;
+                margin-bottom: 10px;
             }
         """)
-        filesSectionLayout = QVBoxLayout(filesSection)
-        
-        # Files header
-        filesHeader = QHBoxLayout()
-        filesLabel = QLabel("Selected Reference Files")
-        filesLabel.setFont(QFont("Arial", 10, QFont.Bold))
-        filesLabel.setStyleSheet("background-color: transparent;")
-        
-        self.fileCountLabel = QLabel("(0 files)")
-        self.fileCountLabel.setStyleSheet("color: #666666; background-color: transparent;")
-        
-        filesHeader.addWidget(filesLabel)
-        filesHeader.addWidget(self.fileCountLabel)
-        filesHeader.addStretch()
-        
-        filesSectionLayout.addLayout(filesHeader)
+        self.clearFilesButton.clicked.connect(self.clearAllFiles)
+        self.contentLayout.addWidget(self.clearFilesButton)
         
         # Files container
-        self.filesContainer = QWidget()
-        self.filesContainerLayout = QVBoxLayout(self.filesContainer)
-        self.filesContainerLayout.setContentsMargins(0, 5, 0, 0)
-        self.filesContainerLayout.setSpacing(5)
+        self.fileListScrollArea = QScrollArea()
+        self.fileListScrollArea.setMinimumHeight(200)
+        self.fileListScrollArea.setWidgetResizable(True)
+        self.fileListScrollArea.setStyleSheet("QScrollArea { border: none; }")
         
-        # Scroll area for files
-        scrollArea = QScrollArea()
-        scrollArea.setWidget(self.filesContainer)
-        scrollArea.setWidgetResizable(True)
-        scrollArea.setMaximumHeight(300)
-        scrollArea.setStyleSheet("""
-            QScrollArea {
-                border: none;
-                background-color: transparent;
-            }
-        """)
+        self.fileListContent = QWidget()
+        self.fileListLayout = QVBoxLayout(self.fileListContent)
+        self.fileListLayout.setAlignment(Qt.AlignTop)
+        self.fileListScrollArea.setWidget(self.fileListContent)
         
-        filesSectionLayout.addWidget(scrollArea)
-        
-        self.contentLayout.addWidget(filesSection)
+        self.contentLayout.addWidget(self.fileListScrollArea)
         
         # Update display
         self.updateFileDisplay()
         self.updateProceedButton()
     
     def showCloudSelectionInterface(self):
-        # Search bar
-        searchLayout = QHBoxLayout()
-        searchLabel = QLabel("Search:")
-        self.searchInput = QLineEdit()
-        self.searchInput.setPlaceholderText("Search products, lots, or insertions...")
-        self.searchInput.setStyleSheet("""
-            QLineEdit {
-                border: 1px solid #DADEE8;
-                border-radius: 5px;
-                padding: 5px;
-                min-height: 25px;
-            }
+        # Search bar matching SelectionPage style
+        searchContainer = QWidget()
+        searchContainer.setStyleSheet("""
+            background-color: rgba(24, 73, 214, 0.08);
+            border-radius: 19px;
         """)
+        searchContainerLayout = QHBoxLayout(searchContainer)
+        searchContainerLayout.setContentsMargins(15, 3, 3, 3)
+        
+        self.searchInput = QLineEdit()
+        self.searchInput.setPlaceholderText("Search products, insertions, or lots...")
+        self.searchInput.setStyleSheet("background-color: transparent; border: none;")
+        self.searchInput.setFixedHeight(30)
         self.searchInput.textChanged.connect(self.filterCloudData)
         
-        searchLayout.addWidget(searchLabel)
-        searchLayout.addWidget(self.searchInput)
-        self.contentLayout.addLayout(searchLayout)
+        searchIcon = QToolButton()
+        searchIcon.setIcon(QIcon(resource_path("./resources/icons/search.png")))
+        searchIcon.setIconSize(QSize(30, 30))
+        searchIcon.setStyleSheet("background: transparent; border: none;")
         
-        # Products tree
+        searchContainerLayout.addWidget(self.searchInput)
+        searchContainerLayout.addWidget(searchIcon)
+        self.contentLayout.addWidget(searchContainer)
+        
+        # Loading indicator
+        self.loadingWidget = QWidget()
+        loadingLayout = QVBoxLayout(self.loadingWidget)
+        loadingLabel = QLabel("Loading reference data...")
+        loadingLabel.setAlignment(Qt.AlignCenter)
+        loadingLabel.setStyleSheet("color: #666666; margin: 20px;")
+        
+        self.loadingProgress = QProgressBar()
+        self.loadingProgress.setStyleSheet("""
+            QProgressBar {
+                border: 2px solid grey;
+                border-radius: 5px;
+                text-align: center;
+            }
+            QProgressBar::chunk {
+                background-color: #1849D6;
+                width: 10px;
+            }
+        """)
+        self.loadingProgress.setMinimum(0)
+        self.loadingProgress.setMaximum(0) 
+        
+        loadingLayout.addWidget(loadingLabel)
+        loadingLayout.addWidget(self.loadingProgress)
+        loadingLayout.setContentsMargins(20, 40, 20, 40)
+        self.contentLayout.addWidget(self.loadingWidget)
+        
+        # Products tree (initially hidden)
         productsLabel = QLabel("Available Products:")
         productsLabel.setFont(QFont("Arial", 10, QFont.Bold))
-        productsLabel.setStyleSheet("margin-top: 10px;")
+        productsLabel.setStyleSheet("margin-top: 10px; background-color: transparent;")
+        productsLabel.hide()
+        self.productsLabelWidget = productsLabel
         self.contentLayout.addWidget(productsLabel)
         
         self.productsTree = QTreeWidget()
@@ -396,39 +478,30 @@ class ReferenceSelectionPage(QWidget):
                 padding: 3px;
             }
             QTreeWidget::item:selected {
-                background-color: #1849D6;
-                color: white;
+                background-color: white;
+                color: black;
             }
             QTreeWidget::indicator {
                 width: 15px;
                 height: 15px;
-            }
-            QTreeWidget::indicator:unchecked {
                 border: 1px solid #DADEE8;
+                border-radius: 5px;
                 background-color: white;
-                border-radius: 3px;
             }
             QTreeWidget::indicator:checked {
                 background-color: #1849D6;
                 border: 1px solid #1849D6;
-                border-radius: 3px;
-            }
-            QTreeWidget::indicator:checked::after {
-                position: absolute;
-                width: 5px;
-                height: 10px;
-                border: solid white;
-                border-width: 0 2px 2px 0;
-                top: 2px;
-                left: 5px;
             }
         """)
         self.productsTree.itemChanged.connect(self.onCloudSelectionChanged)
+        self.productsTree.hide()
         
         scrollArea = QScrollArea()
         scrollArea.setWidget(self.productsTree)
         scrollArea.setWidgetResizable(True)
         scrollArea.setMaximumHeight(400)
+        scrollArea.hide()
+        self.productsScrollArea = scrollArea
         self.contentLayout.addWidget(scrollArea)
         
         # Load cloud data
@@ -436,58 +509,78 @@ class ReferenceSelectionPage(QWidget):
     
     def loadCloudData(self):
         """Load available products from cloud"""
+        if self.cloud_worker and self.cloud_worker.isRunning():
+            return
+        
+        self.cloud_worker = LoadCloudDataWorker(self.reference_client)
+        self.cloud_worker.finished.connect(self.onCloudDataLoaded)
+        self.cloud_worker.error.connect(self.onCloudDataError)
+        self.cloud_worker.start()
+    
+    def onCloudDataLoaded(self, data):
+        """Handle successful cloud data loading"""
+        self.loadingWidget.hide()
+        self.productsLabelWidget.show()
+        self.productsTree.show()
+        self.productsScrollArea.show()
+        
+        self.populateCloudTree(data)
+    
+    def onCloudDataError(self, error_message):
+        """Handle cloud data loading error"""
+        self.loadingWidget.hide()
+        
+        # Show error message
+        errorLabel = QLabel(f"Error loading reference data: {error_message}")
+        errorLabel.setStyleSheet("color: red; margin: 20px;")
+        errorLabel.setWordWrap(True)
+        self.contentLayout.addWidget(errorLabel)
+        
+        QMessageBox.critical(
+            self, 
+            "Connection Error", 
+            f"Failed to load reference data from cloud:\n{error_message}\n\nPlease check your connection or use local reference data."
+        )
+    
+    def populateCloudTree(self, data):
+        """Populate tree with cloud data in Product > Insertion > Lot order"""
         self.productsTree.clear()
         
-        # Show loading message
-        loadingItem = QTreeWidgetItem(self.productsTree, ["Loading reference data..."])
-        self.productsTree.addTopLevelItem(loadingItem)
+        products = data.get("products", {})
         
-        try:
-            # Fetch data from API using the correct method
-            data = self.reference_client.get_reference_data_structure()
+        if not products:
+            noDataItem = QTreeWidgetItem(self.productsTree, ["No reference data available in cloud"])
+            self.productsTree.addTopLevelItem(noDataItem)
+            QMessageBox.information(self, "No Data", "No reference data is currently available in the cloud. Please upload reference data locally or contact your administrator.")
+            return
+        
+        # Reorganize data: Product > Insertion > Lot
+        for product, product_data in products.items():
+            productItem = QTreeWidgetItem(self.productsTree, [product])
+            productItem.setFlags(productItem.flags() | Qt.ItemIsUserCheckable)
+            productItem.setCheckState(0, Qt.Unchecked)
             
-            # Clear loading message
-            self.productsTree.clear()
+            # Collect all insertions for this product
+            insertions_data = {}
+            lots = product_data.get("lots", {})
+            for lot, insertions in lots.items():
+                for insertion in insertions:
+                    if insertion not in insertions_data:
+                        insertions_data[insertion] = []
+                    insertions_data[insertion].append(lot)
             
-            products = data.get("products", {})
-            
-            if not products:
-                noDataItem = QTreeWidgetItem(self.productsTree, ["No reference data available in cloud"])
-                self.productsTree.addTopLevelItem(noDataItem)
-                QMessageBox.information(self, "No Data", "No reference data is currently available in the cloud. Please upload reference data locally or contact your administrator.")
-                return
-            
-            for product, product_data in products.items():
-                productItem = QTreeWidgetItem(self.productsTree, [product])
-                productItem.setFlags(productItem.flags() | Qt.ItemIsUserCheckable)
-                productItem.setCheckState(0, Qt.Unchecked)
+            # Create tree structure: Product > Insertion > Lot
+            for insertion, lots_for_insertion in insertions_data.items():
+                insertionItem = QTreeWidgetItem(productItem, [insertion])
+                insertionItem.setFlags(insertionItem.flags() | Qt.ItemIsUserCheckable)
+                insertionItem.setCheckState(0, Qt.Unchecked)
                 
-                lots = product_data.get("lots", {})
-                for lot, insertions in lots.items():
-                    lotItem = QTreeWidgetItem(productItem, [lot])
+                for lot in lots_for_insertion:
+                    lotItem = QTreeWidgetItem(insertionItem, [lot])
                     lotItem.setFlags(lotItem.flags() | Qt.ItemIsUserCheckable)
                     lotItem.setCheckState(0, Qt.Unchecked)
-                    
-                    for insertion in insertions:
-                        insertionItem = QTreeWidgetItem(lotItem, [insertion])
-                        insertionItem.setFlags(insertionItem.flags() | Qt.ItemIsUserCheckable)
-                        insertionItem.setCheckState(0, Qt.Unchecked)
-            
-            self.productsTree.expandAll()
-            
-        except Exception as e:
-            # Clear loading message
-            self.productsTree.clear()
-            
-            # Show error message
-            errorItem = QTreeWidgetItem(self.productsTree, ["Error loading reference data"])
-            self.productsTree.addTopLevelItem(errorItem)
-            
-            QMessageBox.critical(
-                self, 
-                "Connection Error", 
-                f"Failed to load reference data from cloud:\n{str(e)}\n\nPlease check your connection or use local reference data."
-            )
+        
+        self.productsTree.expandAll()
     
     def filterCloudData(self, text):
         """Filter tree based on search text"""
@@ -542,16 +635,6 @@ class ReferenceSelectionPage(QWidget):
         
         self.updateProceedButton()
     
-    def browseFiles(self):
-        files, _ = QFileDialog.getOpenFileNames(
-            self,
-            "Select Reference Files",
-            "",
-            "Data Files (*.eff *.tsf *.zip)"
-        )
-        if files:
-            self.addReferenceFiles(files)
-    
     def addReferenceFiles(self, files):
         for file_path in files:
             if file_path not in self.reference_files:
@@ -563,8 +646,8 @@ class ReferenceSelectionPage(QWidget):
     def updateFileDisplay(self):
         """Update the file display to match upload page design"""
         # Clear existing widgets
-        while self.filesContainerLayout.count():
-            child = self.filesContainerLayout.takeAt(0)
+        while self.fileListLayout.count():
+            child = self.fileListLayout.takeAt(0)
             if child.widget():
                 child.widget().deleteLater()
         
@@ -572,10 +655,7 @@ class ReferenceSelectionPage(QWidget):
         for file_path in self.reference_files:
             fileWidget = FileItemWidget(file_path)
             fileWidget.remove_clicked.connect(self.removeFile)
-            self.filesContainerLayout.addWidget(fileWidget)
-        
-        # Update file count
-        self.fileCountLabel.setText(f"({len(self.reference_files)} files)")
+            self.fileListLayout.addWidget(fileWidget)
     
     def removeFile(self, file_path):
         """Remove a file from the reference files list"""
@@ -583,6 +663,12 @@ class ReferenceSelectionPage(QWidget):
             self.reference_files.remove(file_path)
             self.updateFileDisplay()
             self.updateProceedButton()
+    
+    def clearAllFiles(self):
+        """Clear all reference files"""
+        self.reference_files.clear()
+        self.updateFileDisplay()
+        self.updateProceedButton()
     
     def updateProceedButton(self):
         if self.localRadio.isChecked():
@@ -607,11 +693,11 @@ class ReferenceSelectionPage(QWidget):
         return False
     
     def getSelectedCloudData(self):
-        """Get selected products, lots, and insertions from tree"""
+        """Get selected products, insertions, and lots from tree"""
         selected = {
             "products": [],
-            "lots": {},
-            "insertions": {}
+            "insertions": {},
+            "lots": {}
         }
         
         for i in range(self.productsTree.topLevelItemCount()):
@@ -619,21 +705,21 @@ class ReferenceSelectionPage(QWidget):
             if product_item.checkState(0) != Qt.Unchecked:
                 product_name = product_item.text(0)
                 selected["products"].append(product_name)
-                selected["lots"][product_name] = []
-                selected["insertions"][product_name] = {}
+                selected["insertions"][product_name] = []
+                selected["lots"][product_name] = {}
                 
                 for j in range(product_item.childCount()):
-                    lot_item = product_item.child(j)
-                    if lot_item.checkState(0) != Qt.Unchecked:
-                        lot_name = lot_item.text(0)
-                        selected["lots"][product_name].append(lot_name)
-                        selected["insertions"][product_name][lot_name] = []
+                    insertion_item = product_item.child(j)
+                    if insertion_item.checkState(0) != Qt.Unchecked:
+                        insertion_name = insertion_item.text(0)
+                        selected["insertions"][product_name].append(insertion_name)
+                        selected["lots"][product_name][insertion_name] = []
                         
-                        for k in range(lot_item.childCount()):
-                            insertion_item = lot_item.child(k)
-                            if insertion_item.checkState(0) == Qt.Checked:
-                                insertion_name = insertion_item.text(0)
-                                selected["insertions"][product_name][lot_name].append(insertion_name)
+                        for k in range(insertion_item.childCount()):
+                            lot_item = insertion_item.child(k)
+                            if lot_item.checkState(0) == Qt.Checked:
+                                lot_name = lot_item.text(0)
+                                selected["lots"][product_name][insertion_name].append(lot_name)
         
         return selected
     

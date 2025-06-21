@@ -107,7 +107,6 @@ class LotInputWithInsertion(QWidget):
         return [inp.text().strip() for inp in self.insertion_inputs if inp.text().strip()]
 
 class UploadPage(QWidget):
-    show_setting_signal = Signal()
     show_selection_signal = Signal(list) 
     show_admin_login_signal = Signal()
 
@@ -210,23 +209,11 @@ class UploadPage(QWidget):
         """)
         self.adminButton.clicked.connect(self.show_admin_login)
         
-        self.settingButton = QPushButton("Settings")
-        self.settingButton.setStyleSheet("""
-            QPushButton {
-                background-color: #FFA500;
-                color: white;
-                border-radius: 5px;
-                padding: 5px 15px;
-                margin-left: 5px;
-            }
-        """)
-        self.settingButton.clicked.connect(self.emit_show_setting)
         
         row1.addLayout(titleLayout)
         row1.addStretch()
         row1.addWidget(self.proceedButton, alignment=Qt.AlignRight)
         row1.addWidget(self.adminButton, alignment=Qt.AlignRight)
-        row1.addWidget(self.settingButton, alignment=Qt.AlignRight)
         row1.setContentsMargins(0,0,0,20)
         headerLayout.addLayout(row1)
         
@@ -598,9 +585,6 @@ class UploadPage(QWidget):
                 worker.stop()
                 worker.wait()
         self.active_workers.clear()
-
-    def emit_show_setting(self):
-        self.show_setting_signal.emit()
     
     def on_proceed_clicked(self):
         all_files = []

@@ -2,7 +2,6 @@ from PySide6.QtWidgets import (QMainWindow, QStackedWidget, QApplication, QWidge
 from PySide6.QtCore import QTimer
 from ui.views.loading_view import LoadingPage
 from ui.views.upload_view import UploadPage
-from ui.views.settings_view import SettingPage
 from ui.views.reference_selection_view import ReferenceSelectionPage
 from ui.views.processing_view import ProcessingPage
 from ui.views.select_view import SelectionPage
@@ -26,7 +25,6 @@ class AppMainWindow(QMainWindow):
         # Initialize all pages
         self.LoadingPage = LoadingPage()
         self.UploadPage = UploadPage()
-        self.SettingPage = SettingPage()
         self.ReferenceSelectionPage = ReferenceSelectionPage()
         self.SelectionPage = SelectionPage()
         self.ProcessingPage = ProcessingPage()
@@ -37,7 +35,6 @@ class AppMainWindow(QMainWindow):
         # Add pages to stack
         self.stack.addWidget(self.LoadingPage)
         self.stack.addWidget(self.UploadPage)
-        self.stack.addWidget(self.SettingPage)
         self.stack.addWidget(self.ReferenceSelectionPage)
         self.stack.addWidget(self.SelectionPage)
         self.stack.addWidget(self.ProcessingPage)
@@ -52,9 +49,7 @@ class AppMainWindow(QMainWindow):
 
     def connectSignals(self):
         # Updated connections
-        self.UploadPage.show_setting_signal.connect(self.show_settings)
-        self.UploadPage.show_selection_signal.connect(self.show_reference_selection)  # Changed to show reference selection
-        self.SettingPage.show_upload_signal.connect(self.show_upload)
+        self.UploadPage.show_selection_signal.connect(self.show_reference_selection) 
         self.ReferenceSelectionPage.show_upload_signal.connect(self.show_upload)
         self.ReferenceSelectionPage.show_selection_signal.connect(self.show_selection)
         self.SelectionPage.show_upload_signal.connect(self.show_upload)
@@ -78,22 +73,17 @@ class AppMainWindow(QMainWindow):
     def showSecondPage(self):
         """Show upload page after loading screen"""
         self.stack.setCurrentWidget(self.UploadPage)
-
-    def show_settings(self):
-        """Show settings page"""
-        self.UploadPage.hide()
-        self.stack.setCurrentWidget(self.SettingPage)
     
     def show_reference_selection(self, file_paths: list):
         """Show reference selection page with uploaded files"""
         self.ReferenceSelectionPage.set_uploaded_files(file_paths)
-        self.setFixedWidth(600)  # Slightly wider for reference selection
+        self.setFixedWidth(600) 
         self.stack.setCurrentWidget(self.ReferenceSelectionPage)
     
     def show_selection(self, file_paths: list, reference_config: dict):
         """Show selection page with uploaded files and reference configuration"""
         self.SelectionPage.set_files(file_paths)
-        self.SelectionPage.set_reference_config(reference_config)  # Pass reference config
+        self.SelectionPage.set_reference_config(reference_config) 
         self.setFixedWidth(480)
         self.stack.setCurrentWidget(self.SelectionPage)
     
