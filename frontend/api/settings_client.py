@@ -1,7 +1,7 @@
 import requests
 from typing import List, Dict, Optional
 import logging
-from resources.config.api_config import get_api_base_url, get_api_headers, get_api_timeout, get_api_verify_ssl
+from api.api_config import get_api_base_url, get_api_headers, get_api_timeout, get_api_verify_ssl
 
 logger = logging.getLogger(__name__)
 

@@ -398,3 +398,7 @@ class SelectionPage(QWidget):
     def on_loading_finished(self, file_groups):
         self.loadingWidget.hide()
         self.populate_lists(file_groups)
+    
+    def set_reference_config(self, reference_config):
+        """Store reference configuration for processing"""
+        self.reference_config = reference_config

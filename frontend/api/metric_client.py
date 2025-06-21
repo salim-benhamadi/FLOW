@@ -2,7 +2,7 @@ from typing import List, Dict, Optional
 import httpx
 import asyncio
 import logging
-from resources.config.api_config import (
+from api.api_config import (
     get_api_base_url, 
     get_api_timeout, 
     get_api_verify_ssl, 
