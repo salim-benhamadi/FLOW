@@ -1,13 +1,13 @@
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFrame,
                                QLabel, QPushButton, QComboBox, QProgressBar, 
                                QTableWidget, QTableWidgetItem, QFileDialog,
-                               QMessageBox, QTabWidget, QSplitter, QHeaderView,
-                               QGroupBox, QGridLayout, QSpacerItem, QSizePolicy,
-                               QScrollArea, QApplication)
+                               QMessageBox, QScrollArea, QApplication,
+                               QGroupBox, QSizePolicy)
 from PySide6.QtCore import Qt, QTimer, Signal, QThread
 from PySide6.QtGui import QFont, QIcon, QColor
 from ui.utils.EFFProcessor import EFFProcessor
 from ui.widgets.EFFUploadDialog import EFFUploadDialog
+from ui.utils.AsyncWorker import AsyncWorker
 from datetime import datetime
 import asyncio
 import traceback
@@ -18,96 +18,6 @@ from PySide6.QtCore import QThread, Signal
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
-class AsyncWorker(QThread):
-    finished = Signal(object)
-    error = Signal(str)
-    progress = Signal(int, str, str)
-
-    def __init__(self, run_task, **kwargs):
-        super().__init__()
-        self.run_task = run_task
-        self.kwargs = kwargs
-        self._is_running = False
-        self._loop = None
-        self._task = None
-        logger.debug("AsyncWorker initialized with kwargs: %s", kwargs)
-
-    def run(self):
-        try:
-            logger.debug("AsyncWorker starting run")
-            self._is_running = True
-            
-            self._loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(self._loop)
-            
-            result = self._loop.run_until_complete(self._safe_run_task())
-            
-            logger.debug("Task completed with result: %s", result)
-            self.finished.emit(result)
-
-        except Exception as e:
-            logger.error("Error in worker: %s", str(e), exc_info=True)
-            self.error.emit(str(e))
-        finally:
-            self._cleanup()
-
-    async def _safe_run_task(self):
-        try:
-            self._task = asyncio.create_task(self.run_task(**self.kwargs))
-            return await self._task
-        except asyncio.CancelledError:
-            logger.debug("Task was cancelled")
-            raise Exception("Operation cancelled")
-        except Exception as e:
-            logger.error(f"Task execution error: {str(e)}")
-            raise
-        finally:
-            pass
-
-    def _cleanup(self):
-        logger.debug("Starting worker cleanup")
-        try:
-            if self._loop and not self._loop.is_closed():
-                pending_tasks = list(asyncio.all_tasks(self._loop))
-                
-                if pending_tasks:
-                    for task in pending_tasks:
-                        if not task.done():
-                            task.cancel()
-                    
-                    try:
-                        self._loop.run_until_complete(
-                            asyncio.wait_for(
-                                asyncio.gather(*pending_tasks, return_exceptions=True),
-                                timeout=2.0
-                            )
-                        )
-                    except (asyncio.TimeoutError, Exception) as e:
-                        logger.debug(f"Task cleanup timeout or error: {e}")
-                
-                if not self._loop.is_closed():
-                    self._loop.close()
-        except Exception as e:
-            logger.error("Error during cleanup: %s", str(e))
-        finally:
-            self._loop = None
-            self._task = None
-            self._is_running = False
-            logger.debug("Worker cleanup completed")
-
-    def stop(self):
-        logger.debug("Stopping worker")
-        if self._is_running and self._loop and not self._loop.is_closed():
-            try:
-                self._loop.call_soon_threadsafe(self._cancel_task)
-            except Exception as e:
-                logger.error("Error cancelling task: %s", str(e))
-        self.wait()
-        logger.debug("Worker stopped")
-    
-    def _cancel_task(self):
-        if self._task and not self._task.done():
-            self._task.cancel()
 
 class RetrainingTab(QWidget):
     def __init__(self, api_client):
@@ -137,49 +47,29 @@ class RetrainingTab(QWidget):
         self.addDataBtn.setEnabled(False)
         self.retrainBtn.setEnabled(False)
         self.deleteBtn.setEnabled(False)
-        self.set_loading_overlay("Loading data...")
 
     def show_ready_state(self):
         self.addDataBtn.setEnabled(True)
         self.retrainBtn.setEnabled(True)
         self.deleteBtn.setEnabled(True)
-        self.hide_loading_overlay()
 
     def show_no_data_state(self):
         self.addDataBtn.setEnabled(True)
         self.retrainBtn.setEnabled(False)
         self.deleteBtn.setEnabled(False)
-        self.hide_loading_overlay()
         self.show_empty_data_message()
 
-    def set_loading_overlay(self, message="Processing..."):
-        self.loadingLabel.setText(f"⏳ {message}")
-        self.loadingLabel.show()
-        QApplication.processEvents()
-
-    def hide_loading_overlay(self):
-        self.loadingLabel.hide()
-        QApplication.processEvents()
-
     def show_empty_data_message(self):
-        self.referenceTable.setRowCount(1)
-        self.referenceTable.setColumnCount(1)
-        self.referenceTable.setHorizontalHeaderLabels(["Status"])
+        self.summaryTable.setRowCount(1)
+        self.summaryTable.setColumnCount(1)
+        self.summaryTable.setHorizontalHeaderLabels(["Status"])
         
         message_item = QTableWidgetItem("✅ Connected to backend - No reference data found.\nClick 'Add Reference Data' to upload EFF files and start training.")
         message_item.setFlags(Qt.ItemIsEnabled)
         message_item.setBackground(QColor("#f8f9fa"))
-        self.referenceTable.setItem(0, 0, message_item)
-        self.referenceTable.horizontalHeader().setStretchLastSection(True)
-        self.referenceTable.resizeRowsToContents()
-
-        self.summaryTable.setRowCount(1)
-        self.summaryTable.setColumnCount(1)
-        self.summaryTable.setHorizontalHeaderLabels(["Status"])
-        summary_item = QTableWidgetItem("No data available")
-        summary_item.setFlags(Qt.ItemIsEnabled)
-        summary_item.setBackground(QColor("#f8f9fa"))
-        self.summaryTable.setItem(0, 0, summary_item)
+        self.summaryTable.setItem(0, 0, message_item)
+        self.summaryTable.horizontalHeader().setStretchLastSection(True)
+        self.summaryTable.resizeRowsToContents()
 
     def create_worker(self, coro, *args, **kwargs):
         worker = AsyncWorker(coro, *args, **kwargs)
@@ -256,8 +146,6 @@ class RetrainingTab(QWidget):
             self.add_status_message("Reference Data", f"Loaded {len(self.reference_data)} records successfully")
             self._update_filter_options(self.reference_data)
             self._update_data_summary()
-            filtered_data = self._filter_data(self.reference_data)
-            self._populate_table_with_data(filtered_data)
             self.show_ready_state()
 
         except Exception as e:
@@ -314,44 +202,15 @@ class RetrainingTab(QWidget):
         self.summaryTable.resizeColumnsToContents()
 
     def show_connection_error_in_table(self):
-        self.referenceTable.setRowCount(1)
-        self.referenceTable.setColumnCount(1)
-        self.referenceTable.setHorizontalHeaderLabels(["Connection Status"])
+        self.summaryTable.setRowCount(1)
+        self.summaryTable.setColumnCount(1)
+        self.summaryTable.setHorizontalHeaderLabels(["Connection Status"])
         
         error_item = QTableWidgetItem("❌ Cannot connect to backend. Check your connection and try again.")
         error_item.setFlags(Qt.ItemIsEnabled)
         error_item.setBackground(QColor("#dc3545"))
         error_item.setForeground(QColor("#ffffff"))
-        self.referenceTable.setItem(0, 0, error_item)
-
-    def _populate_table_with_data(self, filtered_data):
-        self.referenceTable.setColumnCount(8)
-        self.referenceTable.setHorizontalHeaderLabels([
-            "Product", "Lot", "Insertion", "Test Name", 
-            "Test Number", "LSL", "USL", "Created At"
-        ])
-        
-        self.referenceTable.setRowCount(len(filtered_data))
-        for row, data in enumerate(filtered_data):
-            self.referenceTable.setItem(row, 0, QTableWidgetItem(str(data.get('product', ''))))
-            self.referenceTable.setItem(row, 1, QTableWidgetItem(str(data.get('lot', ''))))
-            self.referenceTable.setItem(row, 2, QTableWidgetItem(str(data.get('insertion', ''))))
-            self.referenceTable.setItem(row, 3, QTableWidgetItem(str(data.get('test_name', ''))))
-            self.referenceTable.setItem(row, 4, QTableWidgetItem(str(data.get('test_number', ''))))
-            self.referenceTable.setItem(row, 5, QTableWidgetItem(str(data.get('lsl', ''))))
-            self.referenceTable.setItem(row, 6, QTableWidgetItem(str(data.get('usl', ''))))
-            
-            created_at = data.get('created_at', '')
-            if created_at:
-                try:
-                    dt = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
-                    formatted_date = dt.strftime("%Y-%m-%d %H:%M:%S")
-                except Exception:
-                    formatted_date = created_at
-                self.referenceTable.setItem(row, 7, QTableWidgetItem(formatted_date))
-
-        self.referenceTable.resizeColumnsToContents()
-        logger.debug(f"Updated reference table with {self.referenceTable.rowCount()} rows")
+        self.summaryTable.setItem(0, 0, error_item)
 
     def _update_filter_options(self, reference_data):
         if not reference_data:
@@ -386,6 +245,12 @@ class RetrainingTab(QWidget):
             combo.addItem('No data available')
             combo.setEnabled(False)
 
+    def apply_filters(self):
+        if self.reference_data:
+            filtered_data = self._filter_data(self.reference_data)
+            # Apply filtering to summary table as needed
+            pass
+
     def _filter_data(self, reference_data):
         if not reference_data:
             return []
@@ -407,11 +272,6 @@ class RetrainingTab(QWidget):
             filtered_data = [d for d in filtered_data if str(d.get('insertion', '')).lower() == insertion_filter.lower()]
         
         return filtered_data
-
-    def apply_filters(self):
-        if self.reference_data:
-            filtered_data = self._filter_data(self.reference_data)
-            self._populate_table_with_data(filtered_data)
 
     def clear_filters(self):
         for combo in [self.productFilter, self.lotFilter, self.testFilter, self.insertionFilter]:
@@ -450,7 +310,6 @@ class RetrainingTab(QWidget):
                 
                 upload_data['update_existing'] = True
             
-            self.set_loading_overlay("Processing EFF file...")
             self.progressBar.show()
             self.progressBar.setValue(0)
             self.addDataBtn.setEnabled(False)
@@ -493,7 +352,6 @@ class RetrainingTab(QWidget):
         )
 
         if reply == QMessageBox.Yes:
-            self.set_loading_overlay("Deleting data...")
             self.deleteBtn.setEnabled(False)
             
             worker = self.create_worker(self._async_delete_reference_data, 
@@ -537,7 +395,6 @@ class RetrainingTab(QWidget):
 
     def _handle_delete_complete(self, deleted_count):
         self.deleteBtn.setEnabled(True)
-        self.hide_loading_overlay()
         
         if deleted_count > 0:
             self.add_status_message("Data Deletion", f"Successfully deleted {deleted_count} records")
@@ -697,423 +554,262 @@ class RetrainingTab(QWidget):
         event.accept()
 
     def initUI(self):
-        # Create main scroll area
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.setStyleSheet("background-color: white; color: black")
         
-        # Create main content widget
-        content_widget = QWidget()
-        layout = QVBoxLayout(content_widget)
-        layout.setSpacing(15)
-        layout.setContentsMargins(15, 15, 15, 15)
-
-        # Loading overlay label
-        self.loadingLabel = QLabel("⏳ Loading...")
-        self.loadingLabel.setAlignment(Qt.AlignCenter)
-        self.loadingLabel.setStyleSheet("""
-            QLabel {
-                background-color: rgba(52, 73, 94, 0.9);
-                color: white;
-                font-size: 16px;
-                font-weight: bold;
-                padding: 20px;
-                border-radius: 10px;
-                margin: 10px;
-            }
-        """)
-        self.loadingLabel.hide()
-        controlPanel = QGroupBox("Training Controls")
-        controlPanel.setStyleSheet("""
-            QGroupBox {
-                font-weight: bold;
-                border: 2px solid #bdc3c7;
-                border-radius: 8px;
-                margin-top: 10px;
-                padding-top: 10px;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                left: 10px;
-                padding: 0 5px 0 5px;
-            }
-        """)
-        controlLayout = QHBoxLayout(controlPanel)
-
+        # Main layout
+        mainLayout = QVBoxLayout(self)
+        mainLayout.setContentsMargins(40, 40, 40, 40)
+        mainLayout.setSpacing(15)
+        # Action buttons section
+        buttonsLayout = QHBoxLayout()
+        
         self.addDataBtn = QPushButton("📁 Add Reference Data")
         self.addDataBtn.setStyleSheet("""
             QPushButton {
-                background-color: #27ae60;
+                background-color: #1849D6;
                 color: white;
-                padding: 12px 20px;
-                border-radius: 8px;
+                border-radius: 5px;
+                padding: 8px 15px;
                 font-weight: bold;
-                font-size: 14px;
+                margin-right: 10px;
             }
             QPushButton:hover {
-                background-color: #229954;
+                background-color: #0f3bb3;
             }
             QPushButton:disabled {
-                background-color: #95a5a6;
+                background-color: #CCCCCC;
             }
         """)
         self.addDataBtn.clicked.connect(self.add_reference_data)
-        controlLayout.addWidget(self.addDataBtn)
-
+        
         self.deleteBtn = QPushButton("🗑️ Delete Selected")
         self.deleteBtn.setStyleSheet("""
             QPushButton {
-                background-color: #e74c3c;
+                background-color: #FF0000;
                 color: white;
-                padding: 12px 20px;
-                border-radius: 8px;
+                border-radius: 5px;
+                padding: 8px 15px;
                 font-weight: bold;
-                font-size: 14px;
+                margin-right: 10px;
             }
             QPushButton:hover {
-                background-color: #c0392b;
+                background-color: #CC0000;
             }
             QPushButton:disabled {
-                background-color: #95a5a6;
+                background-color: #CCCCCC;
             }
         """)
         self.deleteBtn.clicked.connect(self.delete_selected_data)
-        controlLayout.addWidget(self.deleteBtn)
-
-        self.retrainBtn = QPushButton("🚀 Start Retraining")
+        
+        self.retrainBtn = QPushButton("🚀 Start Training")
         self.retrainBtn.setStyleSheet("""
             QPushButton {
-                background-color: #3498db;
+                background-color: #1FBE42;
                 color: white;
-                padding: 12px 20px;
-                border-radius: 8px;
+                border-radius: 5px;
+                padding: 8px 15px;
                 font-weight: bold;
-                font-size: 14px;
             }
             QPushButton:hover {
-                background-color: #2980b9;
+                background-color: #17a038;
             }
             QPushButton:disabled {
-                background-color: #95a5a6;
+                background-color: #CCCCCC;
             }
         """)
         self.retrainBtn.clicked.connect(self.start_retraining)
-        controlLayout.addWidget(self.retrainBtn)
-
-        controlLayout.addStretch()
-
-        scheduleGroup = QVBoxLayout()
+        
+        buttonsLayout.addWidget(self.addDataBtn)
+        buttonsLayout.addWidget(self.deleteBtn)
+        buttonsLayout.addWidget(self.retrainBtn)
+        buttonsLayout.addStretch()
+        
+        # Schedule selection
+        scheduleLayout = QVBoxLayout()
         scheduleLabel = QLabel("Schedule:")
-        scheduleLabel.setStyleSheet("font-weight: bold; color: #34495e;")
+        scheduleLabel.setFont(QFont("Arial", 10, QFont.Bold))
+        scheduleLabel.setStyleSheet("color: black; margin-bottom: 5px;")
+        
         self.scheduleCombo = QComboBox()
         self.scheduleCombo.addItems(["Manual", "Daily", "Weekly", "Monthly"])
         self.scheduleCombo.setStyleSheet("""
             QComboBox {
                 padding: 8px;
-                border: 2px solid #bdc3c7;
-                border-radius: 6px;
+                border: 1px solid #CCCCCC;
+                border-radius: 5px;
                 background-color: white;
                 min-width: 120px;
             }
             QComboBox:focus {
-                border-color: #3498db;
+                border-color: #1849D6;
             }
         """)
-        scheduleGroup.addWidget(scheduleLabel)
-        scheduleGroup.addWidget(self.scheduleCombo)
-        controlLayout.addLayout(scheduleGroup)
+        
+        scheduleLayout.addWidget(scheduleLabel)
+        scheduleLayout.addWidget(self.scheduleCombo)
+        buttonsLayout.addLayout(scheduleLayout)
+        
+        mainLayout.addLayout(buttonsLayout)
 
-        layout.addWidget(controlPanel)
-
-        progressFrame = QGroupBox("Processing Progress")
-        progressFrame.setStyleSheet("""
-            QGroupBox {
-                font-weight: bold;
-                border: 2px solid #bdc3c7;
-                border-radius: 8px;
-                margin-top: 10px;
-                padding-top: 10px;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                left: 10px;
-                padding: 0 5px 0 5px;
-            }
-        """)
-        progressLayout = QVBoxLayout(progressFrame)
-
+        # Progress bar
         self.progressBar = QProgressBar()
         self.progressBar.setStyleSheet("""
             QProgressBar {
-                border: 2px solid #bdc3c7;
-                border-radius: 8px;
+                border: 2px solid #CCCCCC;
+                border-radius: 5px;
                 text-align: center;
                 height: 25px;
-                background-color: #ecf0f1;
+                background-color: #f0f0f0;
             }
             QProgressBar::chunk {
-                background-color: #3498db;
-                border-radius: 6px;
+                background-color: #1849D6;
+                border-radius: 3px;
             }
         """)
         self.progressBar.setValue(0)
         self.progressBar.hide()
-        progressLayout.addWidget(self.progressBar)
+        mainLayout.addWidget(self.progressBar)
 
-        layout.addWidget(progressFrame)
-
-        filterFrame = QGroupBox("Data Filters")
-        filterFrame.setStyleSheet("""
-            QGroupBox {
-                font-weight: bold;
-                border: 2px solid #bdc3c7;
-                border-radius: 8px;
-                margin-top: 10px;
-                padding-top: 10px;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                left: 10px;
-                padding: 0 5px 0 5px;
-            }
-        """)
-        filterLayout = QGridLayout(filterFrame)
-
+        # Filter section - simplified design
+        filterLabel = QLabel("Data Filters")
+        filterLabel.setFont(QFont("Arial", 10, QFont.Bold))
+        filterLabel.setStyleSheet("margin-top: 10px; margin-bottom: 5px;")
+        mainLayout.addWidget(filterLabel)
+        
+        filterRowLayout = QHBoxLayout()
+        
         filter_style = """
             QComboBox {
                 padding: 6px;
-                border: 2px solid #bdc3c7;
-                border-radius: 6px;
+                border: 1px solid #CCCCCC;
+                border-radius: 5px;
                 background-color: white;
-                min-width: 120px;
+                min-width: 80px;
             }
             QComboBox:focus {
-                border-color: #3498db;
+                border-color: #1849D6;
             }
         """
-
-        productLabel = QLabel("Product:")
-        productLabel.setStyleSheet("font-weight: bold; color: #34495e;")
+        
         self.productFilter = QComboBox()
         self.productFilter.setEditable(True)
         self.productFilter.setStyleSheet(filter_style)
         self.productFilter.currentTextChanged.connect(lambda: self.apply_filters())
-        filterLayout.addWidget(productLabel, 0, 0)
-        filterLayout.addWidget(self.productFilter, 0, 1)
-
-        lotLabel = QLabel("Lot:")
-        lotLabel.setStyleSheet("font-weight: bold; color: #34495e;")
+        
         self.lotFilter = QComboBox()
         self.lotFilter.setEditable(True)
         self.lotFilter.setStyleSheet(filter_style)
         self.lotFilter.currentTextChanged.connect(lambda: self.apply_filters())
-        filterLayout.addWidget(lotLabel, 0, 2)
-        filterLayout.addWidget(self.lotFilter, 0, 3)
-
-        testLabel = QLabel("Test Name:")
-        testLabel.setStyleSheet("font-weight: bold; color: #34495e;")
+        
         self.testFilter = QComboBox()
         self.testFilter.setEditable(True)
         self.testFilter.setStyleSheet(filter_style)
         self.testFilter.currentTextChanged.connect(lambda: self.apply_filters())
-        filterLayout.addWidget(testLabel, 1, 0)
-        filterLayout.addWidget(self.testFilter, 1, 1)
-
-        insertionLabel = QLabel("Insertion:")
-        insertionLabel.setStyleSheet("font-weight: bold; color: #34495e;")
+        
         self.insertionFilter = QComboBox()
         self.insertionFilter.setEditable(True)
         self.insertionFilter.setStyleSheet(filter_style)
         self.insertionFilter.currentTextChanged.connect(lambda: self.apply_filters())
-        filterLayout.addWidget(insertionLabel, 1, 2)
-        filterLayout.addWidget(self.insertionFilter, 1, 3)
-
-        self.clearFiltersBtn = QPushButton("Clear All Filters")
+        
+        self.clearFiltersBtn = QPushButton("Clear")
         self.clearFiltersBtn.clicked.connect(self.clear_filters)
         self.clearFiltersBtn.setStyleSheet("""
             QPushButton {
-                background-color: #f39c12;
+                background-color: #FFA500;
                 color: white;
-                padding: 8px 16px;
-                border-radius: 6px;
+                padding: 6px 12px;
+                border-radius: 5px;
                 font-weight: bold;
             }
             QPushButton:hover {
-                background-color: #e67e22;
+                background-color: #e68a00;
             }
         """)
-        filterLayout.addWidget(self.clearFiltersBtn, 1, 4)
+        
+        filterRowLayout.addWidget(QLabel("Product:"))
+        filterRowLayout.addWidget(self.productFilter)
+        filterRowLayout.addWidget(QLabel("Lot:"))
+        filterRowLayout.addWidget(self.lotFilter)
+        filterRowLayout.addWidget(QLabel("Test:"))
+        filterRowLayout.addWidget(self.testFilter)
+        filterRowLayout.addWidget(QLabel("Insertion:"))
+        filterRowLayout.addWidget(self.insertionFilter)
+        filterRowLayout.addWidget(self.clearFiltersBtn)
+        filterRowLayout.addStretch()
+        
+        mainLayout.addLayout(filterRowLayout)
 
-        layout.addWidget(filterFrame)
-
-        dataTabWidget = QTabWidget()
-        dataTabWidget.setStyleSheet("""
-            QTabWidget::pane {
-                border: 2px solid #bdc3c7;
-                border-radius: 8px;
-                background-color: white;
-            }
-            QTabBar::tab {
-                background-color: #ecf0f1;
-                padding: 10px 20px;
-                margin-right: 2px;
-                border-top-left-radius: 6px;
-                border-top-right-radius: 6px;
-            }
-            QTabBar::tab:selected {
-                background-color: #3498db;
-                color: white;
-                font-weight: bold;
-            }
-            QTabBar::tab:hover:!selected {
-                background-color: #d5dbdb;
-            }
-        """)
-
-        summaryWidget = QWidget()
-        summaryLayout = QVBoxLayout(summaryWidget)
-
-        summaryLabel = QLabel("📊 Data Summary by Product/Lot/Insertion")
-        summaryLabel.setFont(QFont("Arial", 12, QFont.Bold))
-        summaryLabel.setStyleSheet("color: #2c3e50; margin-bottom: 10px;")
-        summaryLayout.addWidget(summaryLabel)
+        # Data summary table - single table like select page
+        summaryLabel = QLabel("📊 Reference Data Summary")
+        summaryLabel.setFont(QFont("Arial", 10, QFont.Bold))
+        summaryLabel.setStyleSheet("color: black; margin-top: 15px; margin-bottom: 10px;")
+        mainLayout.addWidget(summaryLabel)
 
         self.summaryTable = QTableWidget()
         self.summaryTable.setStyleSheet("""
             QTableWidget {
-                border: 1px solid #bdc3c7;
-                border-radius: 6px;
-                gridline-color: #ecf0f1;
+                border: 1px solid #CCCCCC;
+                border-radius: 5px;
+                gridline-color: #f0f0f0;
                 background-color: white;
-                selection-background-color: #3498db;
+                selection-background-color: #1849D6;
             }
             QHeaderView::section {
-                background-color: #34495e;
-                color: white;
+                background-color: #f8f9fa;
+                color: black;
                 padding: 8px;
-                border: 1px solid #2c3e50;
+                border: 1px solid #CCCCCC;
                 font-weight: bold;
             }
             QTableWidget::item {
                 padding: 8px;
-                border-bottom: 1px solid #ecf0f1;
+                border-bottom: 1px solid #f0f0f0;
             }
             QTableWidget::item:selected {
-                background-color: #3498db;
+                background-color: #1849D6;
                 color: white;
             }
         """)
         self.summaryTable.setSelectionBehavior(QTableWidget.SelectRows)
         self.summaryTable.setAlternatingRowColors(True)
         self.summaryTable.horizontalHeader().setStretchLastSection(True)
-        summaryLayout.addWidget(self.summaryTable)
+        self.summaryTable.setMinimumHeight(200)
+        mainLayout.addWidget(self.summaryTable)
 
-        detailWidget = QWidget()
-        detailLayout = QVBoxLayout(detailWidget)
-
-        detailLabel = QLabel("📋 Detailed Reference Data")
-        detailLabel.setFont(QFont("Arial", 12, QFont.Bold))
-        detailLabel.setStyleSheet("color: #2c3e50; margin-bottom: 10px;")
-        detailLayout.addWidget(detailLabel)
-
-        self.referenceTable = QTableWidget()
-        self.referenceTable.setStyleSheet("""
-            QTableWidget {
-                border: 1px solid #bdc3c7;
-                border-radius: 6px;
-                gridline-color: #ecf0f1;
-                background-color: white;
-                selection-background-color: #3498db;
-            }
-            QHeaderView::section {
-                background-color: #34495e;
-                color: white;
-                padding: 8px;
-                border: 1px solid #2c3e50;
-                font-weight: bold;
-            }
-            QTableWidget::item {
-                padding: 8px;
-                border-bottom: 1px solid #ecf0f1;
-            }
-            QTableWidget::item:selected {
-                background-color: #3498db;
-                color: white;
-            }
-        """)
-        self.referenceTable.setSelectionBehavior(QTableWidget.SelectRows)
-        self.referenceTable.setAlternatingRowColors(True)
-        self.referenceTable.horizontalHeader().setStretchLastSection(True)
-        detailLayout.addWidget(self.referenceTable)
-
-        dataTabWidget.addTab(summaryWidget, "📊 Summary")
-        dataTabWidget.addTab(detailWidget, "📋 Details")
-
-        layout.addWidget(dataTabWidget)
-
-        statusFrame = QGroupBox("Operation Status")
-        statusFrame.setStyleSheet("""
-            QGroupBox {
-                font-weight: bold;
-                border: 2px solid #bdc3c7;
-                border-radius: 8px;
-                margin-top: 10px;
-                padding-top: 10px;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                left: 10px;
-                padding: 0 5px 0 5px;
-            }
-        """)
-        statusLayout = QVBoxLayout(statusFrame)
+        # Status messages section - compact design
+        statusLabel = QLabel("📋 Operation Status")
+        statusLabel.setFont(QFont("Arial", 10, QFont.Bold))
+        statusLabel.setStyleSheet("color: black; margin-top: 15px; margin-bottom: 10px;")
+        mainLayout.addWidget(statusLabel)
 
         self.statusTable = QTableWidget()
         self.statusTable.setColumnCount(3)
         self.statusTable.setHorizontalHeaderLabels(["Time", "Event", "Status"])
-        self.statusTable.setMaximumHeight(150)
+        self.statusTable.setMaximumHeight(120)
         self.statusTable.setStyleSheet("""
             QTableWidget {
-                border: 1px solid #bdc3c7;
-                border-radius: 6px;
-                gridline-color: #ecf0f1;
+                border: 1px solid #CCCCCC;
+                border-radius: 5px;
+                gridline-color: #f0f0f0;
                 background-color: white;
             }
             QHeaderView::section {
-                background-color: #95a5a6;
-                color: white;
+                background-color: #f8f9fa;
+                color: black;
                 padding: 6px;
-                border: 1px solid #7f8c8d;
+                border: 1px solid #CCCCCC;
                 font-weight: bold;
+                font-size: 9px;
             }
             QTableWidget::item {
-                padding: 6px;
-                border-bottom: 1px solid #ecf0f1;
+                padding: 4px;
+                border-bottom: 1px solid #f0f0f0;
+                font-size: 9px;
             }
         """)
         self.statusTable.horizontalHeader().setStretchLastSection(True)
         self.statusTable.setSelectionBehavior(QTableWidget.SelectRows)
-        self.statusTable.setAlternatingRowColors(True)
-        statusLayout.addWidget(self.statusTable)
+        mainLayout.addWidget(self.statusTable)
 
-        layout.addWidget(statusFrame)
-
-        # Set the content widget to the scroll area
-        scroll_area.setWidget(content_widget)
-        
-        # Create the main layout for the widget
-        main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.addWidget(scroll_area)
-        
-        # Add loading overlay on top
-        overlay_layout = QVBoxLayout()
-        overlay_layout.addWidget(self.loadingLabel, alignment=Qt.AlignCenter)
-        main_layout.addLayout(overlay_layout)
-
-        self.setStyleSheet("""
-            QScrollArea {
-                border: none;
-            }
-        """)
+        # Add stretch to push everything up
+        mainLayout.addStretch()
