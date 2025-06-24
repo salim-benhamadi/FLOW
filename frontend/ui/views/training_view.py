@@ -1,8 +1,8 @@
-from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFrame,
+from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFrame,QLineEdit,
                                QLabel, QPushButton, QComboBox, QProgressBar, 
                                QTableWidget, QTableWidgetItem, QFileDialog,
                                QMessageBox, QScrollArea, QApplication,
-                               QGroupBox, QSizePolicy)
+                               QGroupBox, QSizePolicy, QCheckBox)
 from PySide6.QtCore import Qt, QTimer, Signal, QThread
 from PySide6.QtGui import QFont, QIcon, QColor
 from ui.utils.EFFProcessor import EFFProcessor
@@ -11,6 +11,10 @@ from ui.utils.AsyncWorker import AsyncWorker
 from datetime import datetime
 import asyncio
 import traceback
+import numpy as np
+from scipy import stats
+import pickle
+import os
 
 import logging
 from PySide6.QtCore import QThread, Signal
@@ -19,7 +23,114 @@ logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 
+class DistributionComparator:
+    """Compares distributions between new data and reference data"""
+    
+    def __init__(self, model_path='models/my_distribution_model.pkl'):
+        self.model_path = model_path
+        self.model = self._load_model()
+    
+    def _load_model(self):
+        """Load the distribution model"""
+        try:
+            if os.path.exists(self.model_path):
+                with open(self.model_path, 'rb') as f:
+                    return pickle.load(f)
+        except Exception as e:
+            logger.error(f"Error loading model: {e}")
+        return None
+    
+    def calculate_confidence(self, new_data, reference_data):
+        """Calculate confidence score between distributions"""
+        try:
+            # Extract numerical features from both datasets
+            new_features = self._extract_features(new_data)
+            ref_features = self._extract_features(reference_data)
+            
+            # Use Kolmogorov-Smirnov test for distribution comparison
+            ks_statistic, p_value = stats.ks_2samp(new_features, ref_features)
+            
+            # Convert to confidence percentage (higher p-value = more similar)
+            confidence = min(p_value * 100, 100)
+            
+            return confidence
+        except Exception as e:
+            logger.error(f"Error calculating confidence: {e}")
+            return 0
+    
+    def _extract_features(self, data):
+        """Extract numerical features from data"""
+        # This should be adapted based on your data structure
+        features = []
+        for item in data:
+            # Example: extract test values or other numerical features
+            if isinstance(item, dict) and 'value' in item:
+                features.append(float(item['value']))
+        return np.array(features)
+    
+    def find_best_match(self, new_data_metadata, all_reference_data):
+        """Find best matching reference data"""
+        insertion = new_data_metadata.get('insertion', '')
+        product = new_data_metadata.get('product', '')
+        
+        # Filter by same insertion (required)
+        candidates = [
+            ref for ref in all_reference_data 
+            if ref.get('insertion', '').lower() == insertion.lower()
+        ]
+        
+        if not candidates:
+            return None, 0
+        
+        # Prefer same product
+        same_product = [
+            ref for ref in candidates 
+            if ref.get('product', '').lower() == product.lower()
+        ]
+        
+        if same_product:
+            return same_product[0], 100  # Perfect match
+        
+        # Return first candidate with same insertion
+        return candidates[0], 80  # Good match
+
+
+class ModelVersionManager:
+    """Manages model versioning"""
+    
+    def __init__(self, base_path='models/my_distribution_model'):
+        self.base_path = base_path
+        self.current_version = self._get_current_version()
+    
+    def _get_current_version(self):
+        """Get the current model version number"""
+        import re
+        version = 1
+        model_dir = os.path.dirname(self.base_path)
+        
+        if os.path.exists(model_dir):
+            for filename in os.listdir(model_dir):
+                match = re.match(r'my_distribution_model_v(\d+)', filename)
+                if match:
+                    version = max(version, int(match.group(1)))
+        
+        return version
+    
+    def create_new_version(self, model_data):
+        """Create a new model version"""
+        new_version = self.current_version + 1
+        new_path = f"{self.base_path}_v{new_version}.pkl"
+        
+        with open(new_path, 'wb') as f:
+            pickle.dump(model_data, f)
+        
+        self.current_version = new_version
+        return new_path, new_version
+
+
 class RetrainingTab(QWidget):
+    """VAMOS Tool - Variance Analysis and Model Optimization System"""
+    
     def __init__(self, api_client):
         super().__init__()
         self.api_client = api_client
@@ -28,6 +139,8 @@ class RetrainingTab(QWidget):
         self.reference_data = []
         self.data_summary = []
         self.connection_status = "unknown"
+        self.distribution_comparator = DistributionComparator()
+        self.version_manager = ModelVersionManager()
         self.filters = {
             'product': '',
             'lot': '',
@@ -45,17 +158,14 @@ class RetrainingTab(QWidget):
     def show_loading_state(self):
         self.add_status_message("Initializing", "Loading reference data...")
         self.addDataBtn.setEnabled(False)
-        self.retrainBtn.setEnabled(False)
         self.deleteBtn.setEnabled(False)
 
     def show_ready_state(self):
         self.addDataBtn.setEnabled(True)
-        self.retrainBtn.setEnabled(True)
         self.deleteBtn.setEnabled(True)
 
     def show_no_data_state(self):
         self.addDataBtn.setEnabled(True)
-        self.retrainBtn.setEnabled(False)
         self.deleteBtn.setEnabled(False)
         self.show_empty_data_message()
 
@@ -64,7 +174,7 @@ class RetrainingTab(QWidget):
         self.summaryTable.setColumnCount(1)
         self.summaryTable.setHorizontalHeaderLabels(["Status"])
         
-        message_item = QTableWidgetItem("✅ Connected to backend - No reference data found.\nClick 'Add Reference Data' to upload EFF files and start training.")
+        message_item = QTableWidgetItem("✅ Connected to backend - No reference data found.\nClick 'Add Reference Data' to upload EFF files.")
         message_item.setFlags(Qt.ItemIsEnabled)
         message_item.setBackground(QColor("#f8f9fa"))
         self.summaryTable.setItem(0, 0, message_item)
@@ -170,7 +280,8 @@ class RetrainingTab(QWidget):
                     'lot': lot,
                     'insertion': insertion,
                     'test_count': 0,
-                    'created_at': data.get('created_at', '')
+                    'created_at': data.get('created_at', ''),
+                    'model_version': data.get('model_version', 'v1')
                 }
             summary_dict[key]['test_count'] += 1
 
@@ -178,9 +289,9 @@ class RetrainingTab(QWidget):
         self._populate_summary_table()
 
     def _populate_summary_table(self):
-        self.summaryTable.setColumnCount(5)
+        self.summaryTable.setColumnCount(6)
         self.summaryTable.setHorizontalHeaderLabels([
-            "Product", "Lot", "Insertion", "Test Count", "Created At"
+            "Product", "Lot", "Insertion", "Test Count", "Model Version", "Created At"
         ])
         
         self.summaryTable.setRowCount(len(self.data_summary))
@@ -189,6 +300,7 @@ class RetrainingTab(QWidget):
             self.summaryTable.setItem(row, 1, QTableWidgetItem(str(data.get('lot', ''))))
             self.summaryTable.setItem(row, 2, QTableWidgetItem(str(data.get('insertion', ''))))
             self.summaryTable.setItem(row, 3, QTableWidgetItem(str(data.get('test_count', 0))))
+            self.summaryTable.setItem(row, 4, QTableWidgetItem(str(data.get('model_version', 'v1'))))
             
             created_at = data.get('created_at', '')
             if created_at:
@@ -197,7 +309,7 @@ class RetrainingTab(QWidget):
                     formatted_date = dt.strftime("%Y-%m-%d %H:%M")
                 except Exception:
                     formatted_date = created_at
-                self.summaryTable.setItem(row, 4, QTableWidgetItem(formatted_date))
+                self.summaryTable.setItem(row, 5, QTableWidgetItem(formatted_date))
 
         self.summaryTable.resizeColumnsToContents()
 
@@ -295,6 +407,7 @@ class RetrainingTab(QWidget):
             product = upload_data.get('product', '')
             lot = upload_data.get('lot', '')
             insertion = upload_data.get('insertion', '')
+            use_for_retraining = upload_data.get('use_for_retraining', False)
             
             if self.check_existing_data(product, lot, insertion):
                 reply = QMessageBox.question(
@@ -421,7 +534,8 @@ class RetrainingTab(QWidget):
             finally:
                 self.current_worker = None
 
-    async def _async_process_reference_data(self, file_path, product, lot, insertion, update_existing=False):
+    async def _async_process_reference_data(self, file_path, product, lot, insertion, 
+                                           use_for_retraining=False, update_existing=False):
         from api.client import APIClient
         
         worker_api_client = None
@@ -430,9 +544,59 @@ class RetrainingTab(QWidget):
             processor = EFFProcessor(worker_api_client)
             
             logger.debug(f"Processing EFF file: {file_path} (update_existing: {update_existing})")
-            result = await processor.process_eff_file(file_path, product, lot, insertion)
+            
+            # Process the EFF file
+            eff_data = await processor.process_eff_file(file_path, product, lot, insertion)
+            
+            if use_for_retraining:
+                # Find matching reference data
+                self.current_worker.progress.emit(30, "VAMOS Analysis", "Finding matching reference data...")
+                
+                metadata = {'product': product, 'lot': lot, 'insertion': insertion}
+                best_match, match_score = self.distribution_comparator.find_best_match(
+                    metadata, self.reference_data
+                )
+                
+                if best_match:
+                    self.current_worker.progress.emit(50, "VAMOS Analysis", 
+                                                    f"Found match with {match_score}% similarity")
+                    
+                    # Calculate confidence
+                    confidence = self.distribution_comparator.calculate_confidence(
+                        eff_data, [best_match]
+                    )
+                    
+                    self.current_worker.progress.emit(70, "VAMOS Analysis", 
+                                                    f"Distribution confidence: {confidence:.1f}%")
+                    
+                    if confidence >= 95:
+                        # Trigger automatic retraining
+                        self.current_worker.progress.emit(80, "Model Training", 
+                                                        "High confidence detected - Starting automatic retraining...")
+                        
+                        # Perform retraining
+                        await worker_api_client.retrain_model_with_data(eff_data)
+                        
+                        # Create new model version
+                        new_version = self.version_manager.current_version + 1
+                        self.current_worker.progress.emit(90, "Model Training", 
+                                                        f"Created model version v{new_version}")
+                        
+                        # Update metrics
+                        await worker_api_client.update_model_metrics({
+                            'version': new_version,
+                            'confidence': confidence,
+                            'training_data': metadata
+                        })
+                    else:
+                        self.current_worker.progress.emit(100, "VAMOS Analysis", 
+                                                        f"Confidence too low ({confidence:.1f}%) - Manual review required")
+                else:
+                    self.current_worker.progress.emit(100, "VAMOS Analysis", 
+                                                    "No matching reference data found")
+            
             logger.debug(f"Processing completed successfully")
-            return result
+            return eff_data
             
         except Exception as e:
             logger.error("Error processing data: %s", str(e), exc_info=True)
@@ -460,48 +624,6 @@ class RetrainingTab(QWidget):
             self.add_status_message("Upload failed", "Error")
         self._cleanup_current_worker()
 
-    def start_retraining(self):
-        if not self.reference_data:
-            QMessageBox.warning(
-                self, 
-                "No Reference Data", 
-                "Cannot start retraining without reference data. Please upload reference data first."
-            )
-            return
-
-        self.retrainBtn.setEnabled(False)
-        worker = self.create_worker(self._async_start_retraining)
-        worker.progress.connect(self._update_training_progress)
-        worker.finished.connect(lambda _: self._handle_training_complete())
-        worker.start()
-
-    async def _async_start_retraining(self):
-        from api.client import APIClient
-        
-        worker_api_client = None
-        try:
-            worker_api_client = APIClient()
-            await worker_api_client.start_model_retraining()
-            return True
-        except Exception as e:
-            logger.error(f"Error starting retraining: {str(e)}")
-            raise
-        finally:
-            if worker_api_client:
-                try:
-                    await worker_api_client.close()
-                except Exception as e:
-                    logger.error(f"Error closing worker API client: {e}")
-
-    def _update_training_progress(self, value, event, status):
-        self.progressBar.setValue(value)
-        self.add_status_message(event, status)
-
-    def _handle_training_complete(self):
-        self.retrainBtn.setEnabled(True)
-        self.progressBar.hide()
-        self.add_status_message("Training completed", "Success")
-
     def add_status_message(self, event: str, status: str):
         current_time = datetime.now().strftime("%H:%M:%S")
         row_position = self.statusTable.rowCount()
@@ -519,7 +641,7 @@ class RetrainingTab(QWidget):
         print(f"Error: {title}\n{message}")
 
     def closeEvent(self, event):
-        logger.debug("Closing RetrainingTab")
+        logger.debug("Closing VAMOSRetrainingTab")
         
         self._cleanup_current_worker()
         
@@ -560,6 +682,32 @@ class RetrainingTab(QWidget):
         mainLayout = QVBoxLayout(self)
         mainLayout.setContentsMargins(40, 40, 40, 40)
         mainLayout.setSpacing(15)
+        
+        # Header
+        header_frame = QFrame()
+        header_frame.setStyleSheet("""
+            QFrame {
+                background-color: #f8f9fa;
+                border-radius: 8px;
+                padding: 20px;
+                border: 1px solid #e0e0e0;
+            }
+        """)
+        header_layout = QVBoxLayout(header_frame)
+        
+        title_label = QLabel("VAMOS Tool - Variance Analysis & Model Optimization")
+        title_label.setFont(QFont("Arial", 16, QFont.Bold))
+        title_label.setStyleSheet("color: #1849D6; border: none;")
+        
+        subtitle_label = QLabel(f"Current Model Version: v{self.version_manager.current_version}")
+        subtitle_label.setFont(QFont("Arial", 12))
+        subtitle_label.setStyleSheet("color: #666666; border: none;")
+        
+        header_layout.addWidget(title_label)
+        header_layout.addWidget(subtitle_label)
+        
+        mainLayout.addWidget(header_frame)
+        
         # Action buttons section
         buttonsLayout = QHBoxLayout()
         
@@ -601,53 +749,22 @@ class RetrainingTab(QWidget):
         """)
         self.deleteBtn.clicked.connect(self.delete_selected_data)
         
-        self.retrainBtn = QPushButton("🚀 Start Training")
-        self.retrainBtn.setStyleSheet("""
-            QPushButton {
-                background-color: #1FBE42;
-                color: white;
-                border-radius: 5px;
-                padding: 8px 15px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #17a038;
-            }
-            QPushButton:disabled {
-                background-color: #CCCCCC;
-            }
-        """)
-        self.retrainBtn.clicked.connect(self.start_retraining)
-        
         buttonsLayout.addWidget(self.addDataBtn)
         buttonsLayout.addWidget(self.deleteBtn)
-        buttonsLayout.addWidget(self.retrainBtn)
         buttonsLayout.addStretch()
         
-        # Schedule selection
-        scheduleLayout = QVBoxLayout()
-        scheduleLabel = QLabel("Schedule:")
-        scheduleLabel.setFont(QFont("Arial", 10, QFont.Bold))
-        scheduleLabel.setStyleSheet("color: black; margin-bottom: 5px;")
-        
-        self.scheduleCombo = QComboBox()
-        self.scheduleCombo.addItems(["Manual", "Daily", "Weekly", "Monthly"])
-        self.scheduleCombo.setStyleSheet("""
-            QComboBox {
-                padding: 8px;
-                border: 1px solid #CCCCCC;
+        # VAMOS Status Indicator
+        self.vamos_status = QLabel("🔍 VAMOS: Ready")
+        self.vamos_status.setStyleSheet("""
+            QLabel {
+                background-color: #28a745;
+                color: white;
+                padding: 8px 15px;
                 border-radius: 5px;
-                background-color: white;
-                min-width: 120px;
-            }
-            QComboBox:focus {
-                border-color: #1849D6;
+                font-weight: bold;
             }
         """)
-        
-        scheduleLayout.addWidget(scheduleLabel)
-        scheduleLayout.addWidget(self.scheduleCombo)
-        buttonsLayout.addLayout(scheduleLayout)
+        buttonsLayout.addWidget(self.vamos_status)
         
         mainLayout.addLayout(buttonsLayout)
 
@@ -670,7 +787,7 @@ class RetrainingTab(QWidget):
         self.progressBar.hide()
         mainLayout.addWidget(self.progressBar)
 
-        # Filter section - simplified design
+        # Filter section
         filterLabel = QLabel("Data Filters")
         filterLabel.setFont(QFont("Arial", 10, QFont.Bold))
         filterLabel.setStyleSheet("margin-top: 10px; margin-bottom: 5px;")
@@ -739,7 +856,7 @@ class RetrainingTab(QWidget):
         
         mainLayout.addLayout(filterRowLayout)
 
-        # Data summary table - single table like select page
+        # Data summary table
         summaryLabel = QLabel("📊 Reference Data Summary")
         summaryLabel.setFont(QFont("Arial", 10, QFont.Bold))
         summaryLabel.setStyleSheet("color: black; margin-top: 15px; margin-bottom: 10px;")
@@ -776,8 +893,8 @@ class RetrainingTab(QWidget):
         self.summaryTable.setMinimumHeight(200)
         mainLayout.addWidget(self.summaryTable)
 
-        # Status messages section - compact design
-        statusLabel = QLabel("📋 Operation Status")
+        # Status messages section
+        statusLabel = QLabel("📋 VAMOS Operation Log")
         statusLabel.setFont(QFont("Arial", 10, QFont.Bold))
         statusLabel.setStyleSheet("color: black; margin-top: 15px; margin-bottom: 10px;")
         mainLayout.addWidget(statusLabel)
@@ -785,7 +902,7 @@ class RetrainingTab(QWidget):
         self.statusTable = QTableWidget()
         self.statusTable.setColumnCount(3)
         self.statusTable.setHorizontalHeaderLabels(["Time", "Event", "Status"])
-        self.statusTable.setMaximumHeight(120)
+        self.statusTable.setMaximumHeight(150)
         self.statusTable.setStyleSheet("""
             QTableWidget {
                 border: 1px solid #CCCCCC;
@@ -813,3 +930,182 @@ class RetrainingTab(QWidget):
 
         # Add stretch to push everything up
         mainLayout.addStretch()
+
+
+class EFFUploadDialog(QWidget):
+    """Extended EFF Upload Dialog with VAMOS retraining option"""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.parent = parent
+        self.setWindowFlags(Qt.Dialog)
+        self.data = {}
+        self.initUI()
+    
+    def initUI(self):
+        self.setWindowTitle("Add Reference Data - VAMOS")
+        self.setFixedSize(500, 400)
+        
+        layout = QVBoxLayout(self)
+        layout.setSpacing(15)
+        layout.setContentsMargins(20, 20, 20, 20)
+        
+        # Title
+        title = QLabel("Upload EFF File for Reference Data")
+        title.setFont(QFont("Arial", 14, QFont.Bold))
+        title.setAlignment(Qt.AlignCenter)
+        layout.addWidget(title)
+        
+        # File selection
+        file_frame = QFrame()
+        file_frame.setStyleSheet("""
+            QFrame {
+                background-color: #f8f9fa;
+                border: 2px dashed #1849D6;
+                border-radius: 8px;
+                padding: 20px;
+            }
+        """)
+        file_layout = QVBoxLayout(file_frame)
+        
+        self.file_label = QLabel("No file selected")
+        self.file_label.setAlignment(Qt.AlignCenter)
+        file_layout.addWidget(self.file_label)
+        
+        select_btn = QPushButton("Choose EFF File")
+        select_btn.clicked.connect(self.select_file)
+        file_layout.addWidget(select_btn)
+        
+        layout.addWidget(file_frame)
+        
+        # Input fields
+        form_layout = QVBoxLayout()
+        
+        self.product_input = self.create_input_field("Product:")
+        self.lot_input = self.create_input_field("Lot:")
+        self.insertion_input = self.create_input_field("Insertion:")
+        
+        form_layout.addWidget(self.product_input[0])
+        form_layout.addWidget(self.product_input[1])
+        form_layout.addWidget(self.lot_input[0])
+        form_layout.addWidget(self.lot_input[1])
+        form_layout.addWidget(self.insertion_input[0])
+        form_layout.addWidget(self.insertion_input[1])
+        
+        layout.addLayout(form_layout)
+        
+        # VAMOS Retraining checkbox
+        self.retrain_checkbox = QCheckBox("Use this data for automatic retraining (VAMOS)")
+        self.retrain_checkbox.setStyleSheet("""
+            QCheckBox {
+                font-weight: bold;
+                color: #1849D6;
+                padding: 10px;
+                background-color: #e3f2fd;
+                border-radius: 5px;
+            }
+            QCheckBox::indicator {
+                width: 20px;
+                height: 20px;
+            }
+        """)
+        layout.addWidget(self.retrain_checkbox)
+        
+        # Info label
+        info_label = QLabel("ℹ️ If checked, VAMOS will analyze distribution similarity and automatically retrain if confidence ≥ 95%")
+        info_label.setWordWrap(True)
+        info_label.setStyleSheet("color: #666666; font-size: 11px; padding: 5px;")
+        layout.addWidget(info_label)
+        
+        # Buttons
+        button_layout = QHBoxLayout()
+        
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(self.reject)
+        
+        self.upload_btn = QPushButton("Upload")
+        self.upload_btn.clicked.connect(self.accept)
+        self.upload_btn.setEnabled(False)
+        self.upload_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #1849D6;
+                color: white;
+                font-weight: bold;
+                padding: 8px 20px;
+                border-radius: 5px;
+            }
+            QPushButton:hover {
+                background-color: #0f3bb3;
+            }
+            QPushButton:disabled {
+                background-color: #CCCCCC;
+            }
+        """)
+        
+        button_layout.addWidget(cancel_btn)
+        button_layout.addWidget(self.upload_btn)
+        
+        layout.addLayout(button_layout)
+    
+    def create_input_field(self, label_text):
+        label = QLabel(label_text)
+        label.setFont(QFont("Arial", 10))
+        
+        input_field = QLineEdit()
+        input_field.setStyleSheet("""
+            QLineEdit {
+                padding: 8px;
+                border: 1px solid #CCCCCC;
+                border-radius: 5px;
+                font-size: 12px;
+            }
+            QLineEdit:focus {
+                border-color: #1849D6;
+            }
+        """)
+        input_field.textChanged.connect(self.validate_inputs)
+        
+        return label, input_field
+    
+    def select_file(self):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select EFF File",
+            "",
+            "EFF Files (*.eff);;All Files (*)"
+        )
+        
+        if file_path:
+            self.data['file_path'] = file_path
+            self.file_label.setText(os.path.basename(file_path))
+            self.validate_inputs()
+    
+    def validate_inputs(self):
+        has_file = 'file_path' in self.data
+        has_product = bool(self.product_input[1].text().strip())
+        has_lot = bool(self.lot_input[1].text().strip())
+        has_insertion = bool(self.insertion_input[1].text().strip())
+        
+        self.upload_btn.setEnabled(has_file and has_product and has_lot and has_insertion)
+    
+    def accept(self):
+        self.data['product'] = self.product_input[1].text().strip()
+        self.data['lot'] = self.lot_input[1].text().strip()
+        self.data['insertion'] = self.insertion_input[1].text().strip()
+        self.data['use_for_retraining'] = self.retrain_checkbox.isChecked()
+        self.close()
+        self.parent.dialog_result = True
+    
+    def reject(self):
+        self.close()
+        self.parent.dialog_result = False
+    
+    def exec_(self):
+        self.parent.dialog_result = False
+        self.show()
+        while self.isVisible():
+            QApplication.processEvents()
+        return self.parent.dialog_result
+    
+    def get_data(self):
+        return self.data

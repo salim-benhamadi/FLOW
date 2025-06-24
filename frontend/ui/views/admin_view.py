@@ -1,9 +1,11 @@
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTabWidget, 
                                QLabel, QPushButton, QTableWidget, 
-                               QTableWidgetItem, QComboBox, QDoubleSpinBox, QFrame)
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QFont
+                               QTableWidgetItem, QComboBox, QDoubleSpinBox, QFrame, QTabBar)
+from PySide6.QtCore import Qt, Signal, QTimer, QThread
+from PySide6.QtGui import QFont, QIcon, QPalette
 import math
+import asyncio
+import logging
 from ui.views.training_view import RetrainingTab
 from api.client import APIClient
 from api.metric_client import MetricClient
@@ -15,6 +17,71 @@ from api.reference_client import ReferenceClient
 from ui.widgets.GaugeWidget import FeedbackMetricWidget, MetricWidget
 import json
 
+logger = logging.getLogger(__name__)
+
+class ConnectionWorker(QThread):
+    """Worker thread for checking cloud connection status"""
+    connection_status_changed = Signal(bool, str)  # is_connected, status_message
+    
+    def __init__(self):
+        super().__init__()
+        self.api_client = None
+        self.is_running = True
+        
+    def run(self):
+        """Check connection status periodically"""
+        while self.is_running:
+            try:
+                # Create a new event loop for this thread
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                
+                # Test connection
+                is_connected, message = loop.run_until_complete(self.check_connection())
+                self.connection_status_changed.emit(is_connected, message)
+                
+                loop.close()
+                
+            except Exception as e:
+                logger.error(f"Error in connection worker: {e}")
+                self.connection_status_changed.emit(False, f"Connection error: {str(e)}")
+            
+            # Wait 30 seconds before next check
+            self.msleep(30000)
+    
+    async def check_connection(self):
+        """Async method to check cloud connection"""
+        try:
+            if self.api_client is None:
+                self.api_client = APIClient()
+            
+            # Try to get health status
+            health_data = await self.api_client.health_check()
+            
+            if health_data and health_data.get('status') == 'healthy':
+                db_status = health_data.get('database', 'unknown')
+                env = health_data.get('environment', 'unknown')
+                return True, f"Connected to {env} environment (DB: {db_status})"
+            else:
+                return False, "Backend unhealthy"
+                
+        except Exception as e:
+            logger.debug(f"Connection check failed: {e}")
+            return False, f"Offline: {str(e)}"
+        finally:
+            if self.api_client:
+                try:
+                    await self.api_client.close()
+                    self.api_client = None
+                except:
+                    pass
+    
+    def stop(self):
+        """Stop the worker thread"""
+        self.is_running = False
+        self.quit()
+        self.wait(5000)  # Wait up to 5 seconds for thread to finish
+
         
 class AdminDashboard(QWidget):
     show_upload_signal = Signal()  
@@ -23,261 +90,438 @@ class AdminDashboard(QWidget):
         super().__init__()
         self.setWindowTitle("Admin Dashboard")
         self.setMinimumHeight(700)
+        
+        # Connection monitoring
+        self.connection_worker = None
+        self.is_connected = False
+        self.connection_message = "Checking connection..."
+        
         self.initUI()
+        self.start_connection_monitoring()
 
     def initUI(self):
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(20)
 
-        # First row
+        # Header section with improved spacing
         headerLayout = QHBoxLayout()
         titleLayout = QVBoxLayout()
+        titleLayout.setSpacing(5)
         
         title = QLabel("Admin Dashboard")
-        title.setFont(QFont("Arial", 12, QFont.Bold))
-        title.setStyleSheet("margin-bottom: 0px;")
+        title.setFont(QFont("Arial", 16, QFont.Bold))
+        title.setStyleSheet("color: #2C3E50; margin-bottom: 0px;")
+        
         subtitle = QLabel("Manage system settings and performance")
-        subtitle.setFont(QFont("Arial", 8))
-        subtitle.setStyleSheet("color: gray; margin-top: 0px; margin-bottom: 20px;")
+        subtitle.setFont(QFont("Arial", 10))
+        subtitle.setStyleSheet("color: #7F8C8D; margin-top: 0px;")
         
         titleLayout.addWidget(title)
         titleLayout.addWidget(subtitle)
         
-        self.backButton = QPushButton("Back")
+        # Status and navigation buttons
+        buttonLayout = QHBoxLayout()
+        buttonLayout.setSpacing(10)
+        
+        self.status = QPushButton("● Checking...")
+        self.status.setStyleSheet("""
+            QPushButton {
+                background-color: transparent;
+                color: #F39C12;
+                border: 2px solid #F39C12;
+                border-radius: 8px;
+                padding: 8px 16px;
+                font-weight: bold;
+                font-size: 11px;
+            }
+            QPushButton:hover {
+                background-color: rgba(243, 156, 18, 0.1);
+            }
+        """)
+        self.status.clicked.connect(self.manual_connection_check)
+        
+        self.backButton = QPushButton("← Back")
         self.backButton.setStyleSheet("""
             QPushButton {
                 background-color: #1849D6;
                 color: white;
-                border-radius: 5px;
-                padding: 5px 15px;
+                border: none;
+                border-radius: 8px;
+                padding: 8px 20px;
+                font-weight: bold;
+                font-size: 11px;
+            }
+            QPushButton:hover {
+                background-color: #1640C4;
+            }
+            QPushButton:pressed {
+                background-color: #1235A8;
             }
             QPushButton:disabled {
-                background-color: grey;
+                background-color: #BDC3C7;
             }
         """)
         self.backButton.clicked.connect(lambda: self.show_upload_signal.emit())
         
+        buttonLayout.addWidget(self.status)
+        buttonLayout.addWidget(self.backButton)
+        
         headerLayout.addLayout(titleLayout)
         headerLayout.addStretch()
-        headerLayout.addWidget(self.backButton, alignment=Qt.AlignRight)
-                    
-        self.status = QPushButton("Online")
-        self.status.setStyleSheet("""
-            QPushButton {
-            background-color: transparent;
-            color: green;
-            border: 1px solid green;
-            border-radius: 5px;
-            padding: 5px 15px;
-            margin-left: 5px;
-            }
-            QPushButton::inside {
-            border: 1px solid green;
-            }
-        """)
-        headerLayout.addWidget(self.status, alignment=Qt.AlignRight)
-        headerLayout.addLayout(headerLayout)
+        headerLayout.addLayout(buttonLayout)
         
         layout.addLayout(headerLayout)
 
-        # Create tab widget
-        tabs = QTabWidget()
-        tabs.addTab(self.createMetricsTab(), "Metrics & Analytics")
-        tabs.addTab(self.createFeedbackTab(), "Feedback Management")
-        tabs.addTab(self.createRetrainingTab(), "Retraining Controls")
-        tabs.addTab(self.createSettingsTab(), "Settings")
+        # Enhanced tab widget with modern styling
+        tabs = self.createStyledTabWidget()
+        tabs.addTab(self.createMetricsTab(), "📊 Analytics")
+        tabs.addTab(self.createFeedbackTab(), "💬 Feedback")
+        tabs.addTab(self.createRetrainingTab(), "🔄 Training")
+        tabs.addTab(self.createSettingsTab(), "⚙️ Settings")
         
         layout.addWidget(tabs)
+
+    def createStyledTabWidget(self):
+        """Create a modern, styled tab widget"""
+        tabs = QTabWidget()
+        
+        # Set tab position and shape
+        tabs.setTabPosition(QTabWidget.North)
+        tabs.setTabShape(QTabWidget.Rounded)
+        
+        # Apply comprehensive styling
+        tabs.setStyleSheet("""
+            QTabWidget {
+                background-color: white;
+                border: none;
+            }
+            
+            QTabWidget::pane {
+                border: 2px solid #E8E8E8;
+                border-radius: 12px;
+                background-color: white;
+                margin-top: 0px;
+                padding: 0px;
+            }
+            
+            QTabWidget::tab-bar {
+                alignment: left;
+                border: none;
+            }
+            
+            QTabBar::tab {
+                background-color: #F8F9FA;
+                color: #6C757D;
+                padding: 12px 24px;
+                margin-right: 4px;
+                margin-bottom: 2px;
+                border: 2px solid transparent;
+                border-top-left-radius: 12px;
+                border-top-right-radius: 12px;
+                font-weight: 600;
+                font-size: 12px;
+                min-width: 120px;
+            }
+            
+            QTabBar::tab:hover {
+                background-color: #E9ECEF;
+                color: #495057;
+                border-color: #DEE2E6;
+            }
+            
+            QTabBar::tab:selected {
+                background-color: white;
+                color: #1849D6;
+                border-color: #E8E8E8;
+                border-bottom-color: white;
+                font-weight: bold;
+            }
+            
+            QTabBar::tab:!selected {
+                margin-top: 4px;
+            }
+            
+            /* Remove tab focus outline */
+            QTabBar::tab:focus {
+                outline: none;
+            }
+        """)
+        
+        return tabs
 
     def createFeedbackTab(self):
         feedback_client = FeedbackClient()
         input_client = InputClient()
         reference_client = ReferenceClient()
         feedback_tab = FeedbackTab(feedback_client, input_client, reference_client)
+        
+        # Add container styling to tab content
+        self.styleTabContent(feedback_tab)
         return feedback_tab
 
     def createRetrainingTab(self):
         api_client = APIClient()
         retrain_tab = RetrainingTab(api_client)
+        
+        # Add container styling to tab content
+        self.styleTabContent(retrain_tab)
         return retrain_tab
     
     def createMetricsTab(self):
         api_client = MetricClient()
         metrics_tab = MetricsTab(api_client)
+        
+        # Add container styling to tab content
+        self.styleTabContent(metrics_tab)
         return metrics_tab
-
-    def load_metrics_data(self):
-        """Load training history from JSON file with error handling"""
-        try:
-            with open('training_history.json', 'r') as f:
-                return json.load(f)
-        except (FileNotFoundError, json.JSONDecodeError) as e:
-            print(f"Error loading training history: {e}")
-            return {
-                "latest_training": "2024-01-30",
-                "history": [
-                    {
-                        "date": "2024-01-30",
-                        "duration": "2h 15m",
-                        "accuracy": 0.95,
-                        "loss": 0.023,
-                        "checkpoint_version": "v1.0.0"
-                    }
-                ]
-            }
-
-    def get_latest_metrics(self):
-        """Get the most recent metrics with error handling"""
-        try:
-            return self.training_history["history"][0]
-        except (KeyError, IndexError):
-            return {
-                "accuracy": 0.95,
-                "loss": 0.023,
-                "duration": "2h 15m",
-                "checkpoint_version": "v1.0.0"
-            }
-
-    def refresh_metrics(self, layout):
-        """Refresh metrics display"""
-        self.training_history = self.load_metrics_data()
-        # Clear and rebuild the metrics tab
-        while layout.count():
-            child = layout.takeAt(0)
-            if child.widget():
-                child.widget().deleteLater()
-                
-        # Recreate the metrics tab with new data
-        self.createMetricsTab()
-
-    def create_trend_chart(self, history):
-        """Create trend visualization widget"""
-        trend_widget = QWidget()
-        trend_widget.setMinimumHeight(200)
-        trend_widget.setStyleSheet("""
-            background-color: #f8f9fa;
-            border-radius: 8px;
-            border: 1px dashed #d0d0d0;
-        """)
-        
-        # Here you could add actual chart visualization
-        # For now, using placeholder label
-        chart_label = QLabel("Performance Graph\n(Trend visualization from training history)")
-        chart_label.setAlignment(Qt.AlignCenter)
-        
-        layout = QVBoxLayout(trend_widget)
-        layout.addWidget(chart_label)
-        
-        return trend_widget
-
-    def populate_summary_table(self, table, history):
-        """Populate the summary table with training history"""
-        table.setRowCount(len(history))
-        
-        for i, entry in enumerate(history):
-            table.setItem(i, 0, QTableWidgetItem(entry["date"]))
-            table.setItem(i, 1, QTableWidgetItem(entry["duration"]))
-            table.setItem(i, 2, QTableWidgetItem(f"{entry['accuracy']:.3f}"))
-            table.setItem(i, 3, QTableWidgetItem(f"{entry['loss']:.3f}"))
-            table.setItem(i, 4, QTableWidgetItem(entry.get("checkpoint_version", "N/A")))
-        
-        # Adjust column widths
-        table.resizeColumnsToContents()
 
     def createSettingsTab(self):
         widget = QWidget()
         layout = QVBoxLayout(widget)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(20)
 
-        # Confidence Threshold
-        thresholdFrame = QFrame()
-        thresholdFrame.setFrameStyle(QFrame.StyledPanel)
-        thresholdLayout = QVBoxLayout(thresholdFrame)
+        # Settings header
+        headerLabel = QLabel("Configuration Settings")
+        headerLabel.setFont(QFont("Arial", 14, QFont.Bold))
+        headerLabel.setStyleSheet("color: #2C3E50; margin-bottom: 10px;")
+        layout.addWidget(headerLabel)
+
+        # Confidence Threshold Section
+        thresholdFrame = self.createSettingsSection("Confidence Threshold", "Set the minimum confidence level for model predictions")
+        thresholdLayout = thresholdFrame.layout()
         
-        thresholdLabel = QLabel("Confidence Threshold")
+        thresholdContainer = QHBoxLayout()
+        thresholdLabel = QLabel("Threshold Value:")
+        thresholdLabel.setFont(QFont("Arial", 10))
+        
         thresholdSpinner = QDoubleSpinBox()
         thresholdSpinner.setRange(0.0, 1.0)
         thresholdSpinner.setSingleStep(0.05)
         thresholdSpinner.setValue(0.95)
+        thresholdSpinner.setStyleSheet("""
+            QDoubleSpinBox {
+                border: 2px solid #E8E8E8;
+                border-radius: 6px;
+                padding: 8px;
+                font-size: 11px;
+                background-color: white;
+            }
+            QDoubleSpinBox:focus {
+                border-color: #1849D6;
+            }
+        """)
         
-        thresholdLayout.addWidget(thresholdLabel)
-        thresholdLayout.addWidget(thresholdSpinner)
+        thresholdContainer.addWidget(thresholdLabel)
+        thresholdContainer.addWidget(thresholdSpinner)
+        thresholdContainer.addStretch()
+        
+        thresholdLayout.addLayout(thresholdContainer)
         layout.addWidget(thresholdFrame)
 
-        # Feedback Weights
-        weightsFrame = QFrame()
-        weightsFrame.setFrameStyle(QFrame.StyledPanel)
-        weightsLayout = QVBoxLayout(weightsFrame)
+        # Feedback Weights Section
+        weightsFrame = self.createSettingsSection("Feedback Weights", "Adjust the importance of different feedback types")
+        weightsLayout = weightsFrame.layout()
         
-        weightsLabel = QLabel("Feedback Weights")
-        weightsLabel.setFont(QFont("Arial", 12, QFont.Bold))
-        weightsLayout.addWidget(weightsLabel)
+        # Add weight adjustment controls
+        weights = [
+            ("Critical Issues", 2.0, "#E74C3C"),
+            ("High Priority", 1.5, "#F39C12"), 
+            ("Normal Priority", 1.0, "#27AE60")
+        ]
         
-        # Add weight adjustment sliders
-        criticalWeight = self.createWeightAdjuster("Critical Issues")
-        highWeight = self.createWeightAdjuster("High Priority")
-        normalWeight = self.createWeightAdjuster("Normal Priority")
-        
-        weightsLayout.addWidget(criticalWeight)
-        weightsLayout.addWidget(highWeight)
-        weightsLayout.addWidget(normalWeight)
+        for label, default_value, color in weights:
+            weightWidget = self.createWeightAdjuster(label, default_value, color)
+            weightsLayout.addWidget(weightWidget)
         
         layout.addWidget(weightsFrame)
-
+        
+        # Add stretch to push content to top
+        layout.addStretch()
+        
+        # Apply tab content styling
+        self.styleTabContent(widget)
         return widget
 
-    def createMetricWidget(self, title, value, color):
+    def createSettingsSection(self, title, description):
+        """Create a styled settings section frame"""
         frame = QFrame()
-        frame.setFrameStyle(QFrame.StyledPanel)
-        frame.setStyleSheet(f"QFrame {{ border: 2px solid {color}; border-radius: 5px; padding: 10px; }}")
+        frame.setFrameStyle(QFrame.NoFrame)
+        frame.setStyleSheet("""
+            QFrame {
+                background-color: #FBFBFB;
+                border: 1px solid #E8E8E8;
+                border-radius: 8px;
+                padding: 16px;
+            }
+        """)
         
         layout = QVBoxLayout(frame)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
         
+        # Section title
         titleLabel = QLabel(title)
-        valueLabel = QLabel(value)
-        valueLabel.setFont(QFont("Arial", 20, QFont.Bold))
-        valueLabel.setStyleSheet(f"color: {color};")
+        titleLabel.setFont(QFont("Arial", 12, QFont.Bold))
+        titleLabel.setStyleSheet("color: #2C3E50;")
+        
+        # Section description
+        descLabel = QLabel(description)
+        descLabel.setFont(QFont("Arial", 9))
+        descLabel.setStyleSheet("color: #7F8C8D;")
+        descLabel.setWordWrap(True)
         
         layout.addWidget(titleLabel)
-        layout.addWidget(valueLabel)
+        layout.addWidget(descLabel)
         
         return frame
 
-    def createWeightAdjuster(self, label):
+    def createWeightAdjuster(self, label, default_value, color):
+        """Create an enhanced weight adjustment widget"""
         widget = QWidget()
         layout = QHBoxLayout(widget)
+        layout.setContentsMargins(0, 8, 0, 8)
         
+        # Color indicator
+        indicator = QLabel("●")
+        indicator.setStyleSheet(f"color: {color}; font-size: 16px;")
+        
+        # Label
         nameLabel = QLabel(label)
-        spinner = QDoubleSpinBox()
-        spinner.setRange(0.0, 2.0)
-        spinner.setSingleStep(0.1)
-        spinner.setValue(1.0)
+        nameLabel.setFont(QFont("Arial", 10))
+        nameLabel.setMinimumWidth(120)
         
+        # Spinner
+        spinner = QDoubleSpinBox()
+        spinner.setRange(0.0, 3.0)
+        spinner.setSingleStep(0.1)
+        spinner.setValue(default_value)
+        spinner.setMinimumWidth(80)
+        spinner.setStyleSheet("""
+            QDoubleSpinBox {
+                border: 2px solid #E8E8E8;
+                border-radius: 6px;
+                padding: 6px;
+                font-size: 10px;
+                background-color: white;
+            }
+            QDoubleSpinBox:focus {
+                border-color: #1849D6;
+            }
+        """)
+        
+        # Value label
+        valueLabel = QLabel(f"×{default_value}")
+        valueLabel.setFont(QFont("Arial", 9))
+        valueLabel.setStyleSheet("color: #7F8C8D;")
+        valueLabel.setMinimumWidth(40)
+        
+        # Connect spinner to update value label
+        spinner.valueChanged.connect(lambda value: valueLabel.setText(f"×{value:.1f}"))
+        
+        layout.addWidget(indicator)
         layout.addWidget(nameLabel)
         layout.addWidget(spinner)
+        layout.addWidget(valueLabel)
+        layout.addStretch()
         
         return widget
 
-    def populateFeedbackTable(self):
-        # Demo data - replace with real data
-        feedbackData = [
-            ("FB001", "Model Accuracy", "High", "Pending", "0.85", "2024-01-09"),
-            ("FB002", "False Positive", "Critical", "In Review", "0.92", "2024-01-09"),
-            ("FB003", "Data Quality", "Medium", "Resolved", "0.78", "2024-01-08"),
-        ]
-        
-        self.feedbackTable.setRowCount(len(feedbackData))
-        for i, row in enumerate(feedbackData):
-            for j, item in enumerate(row):
-                self.feedbackTable.setItem(i, j, QTableWidgetItem(str(item)))
+    def start_connection_monitoring(self):
+        """Start monitoring cloud connection status"""
+        try:
+            self.connection_worker = ConnectionWorker()
+            self.connection_worker.connection_status_changed.connect(self.update_connection_status)
+            self.connection_worker.start()
+            logger.info("Connection monitoring started")
+        except Exception as e:
+            logger.error(f"Failed to start connection monitoring: {e}")
+            self.update_connection_status(False, "Connection monitoring failed")
 
-    def populateStatusMessages(self):
-        # Demo data - replace with real data
-        statusData = [
-            ("09:15:00", "Training Started", "Complete"),
-            ("09:30:00", "Validation Phase", "In Progress"),
-            ("09:45:00", "Model Evaluation", "Pending"),
-        ]
+    def update_connection_status(self, is_connected: bool, message: str):
+        """Update the connection status button"""
+        self.is_connected = is_connected
+        self.connection_message = message
         
-        self.statusMessages.setRowCount(len(statusData))
-        for i, row in enumerate(statusData):
-            for j, item in enumerate(row):
-                self.statusMessages.setItem(i, j, QTableWidgetItem(str(item)))
+        if is_connected:
+            self.status.setText("● Online")
+            self.status.setStyleSheet("""
+                QPushButton {
+                    background-color: transparent;
+                    color: #27AE60;
+                    border: 2px solid #27AE60;
+                    border-radius: 8px;
+                    padding: 8px 16px;
+                    font-weight: bold;
+                    font-size: 11px;
+                }
+                QPushButton:hover {
+                    background-color: rgba(39, 174, 96, 0.1);
+                }
+            """)
+            self.status.setToolTip(f"Connected: {message}")
+        else:
+            self.status.setText("● Offline")
+            self.status.setStyleSheet("""
+                QPushButton {
+                    background-color: transparent;
+                    color: #E74C3C;
+                    border: 2px solid #E74C3C;
+                    border-radius: 8px;
+                    padding: 8px 16px;
+                    font-weight: bold;
+                    font-size: 11px;
+                }
+                QPushButton:hover {
+                    background-color: rgba(231, 76, 60, 0.1);
+                }
+            """)
+            self.status.setToolTip(f"Offline: {message}")
+
+    def manual_connection_check(self):
+        """Manually trigger a connection check"""
+        self.status.setText("● Checking...")
+        self.status.setStyleSheet("""
+            QPushButton {
+                background-color: transparent;
+                color: #F39C12;
+                border: 2px solid #F39C12;
+                border-radius: 8px;
+                padding: 8px 16px;
+                font-weight: bold;
+                font-size: 11px;
+            }
+            QPushButton:hover {
+                background-color: rgba(243, 156, 18, 0.1);
+            }
+        """)
+        self.status.setToolTip("Checking connection...")
+        
+        # The worker will automatically update the status
+
+    def closeEvent(self, event):
+        """Clean up when the widget is closed"""
+        if self.connection_worker:
+            self.connection_worker.stop()
+            self.connection_worker = None
+        event.accept()
+
+    def styleTabContent(self, widget):
+        """Apply consistent styling to tab content"""
+        widget.setStyleSheet("""
+            QWidget {
+                background-color: white;
+            }
+        """)
+        
+        # Add padding to the main layout if it exists
+        try:
+            # Try to get layout as a method first
+            layout = widget.layout()
+            if layout is not None:
+                layout.setContentsMargins(20, 20, 20, 20)
+        except TypeError:
+            # If layout is an attribute, not a method
+            if hasattr(widget, 'layout') and widget.layout is not None:
+                widget.layout.setContentsMargins(20, 20, 20, 20)

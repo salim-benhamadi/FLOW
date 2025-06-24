@@ -467,7 +467,102 @@ class APIClient:
         except Exception as e:
             logger.error(f"Error stopping training: {str(e)}")
             raise
-
+    
+    async def get_model_versions(self) -> List[str]:
+        """Get list of all model versions"""
+        try:
+            response = await self._make_request('GET', '/api/model-versions')
+            return response.get('versions', [])
+        except Exception as e:
+            logger.error(f"Error fetching model versions: {e}")
+            return []
+    
+    async def get_model_metrics(self, version: str = None) -> List[Dict]:
+        """Get metrics for a specific model version"""
+        try:
+            params = {'version': version} if version else {}
+            response = await self._make_request('GET', '/api/model-metrics', params=params)
+            return response.get('metrics', [])
+        except Exception as e:
+            logger.error(f"Error fetching model metrics: {e}")
+            return []
+    
+    async def get_version_comparison_data(self) -> List[Dict]:
+        """Get comparison data across all model versions"""
+        try:
+            response = await self._make_request('GET', '/api/model-versions/comparison')
+            return response.get('comparison_data', [])
+        except Exception as e:
+            logger.error(f"Error fetching version comparison: {e}")
+            return []
+    
+    async def get_training_history(self) -> List[Dict]:
+        """Get model training history"""
+        try:
+            response = await self._make_request('GET', '/api/training-history')
+            return response.get('history', [])
+        except Exception as e:
+            logger.error(f"Error fetching training history: {e}")
+            return []
+    
+    async def compare_distributions(self, new_data: Dict, reference_id: str) -> Dict:
+        """Compare distributions between new data and reference"""
+        try:
+            payload = {
+                'new_data': new_data,
+                'reference_id': reference_id
+            }
+            response = await self._make_request('POST', '/api/compare-distributions', data=payload)
+            return response
+        except Exception as e:
+            logger.error(f"Error comparing distributions: {e}")
+            return {'confidence': 0, 'match_score': 0}
+    
+    async def retrain_model_with_data(self, training_data: Dict) -> Dict:
+        """Trigger model retraining with specific data"""
+        try:
+            response = await self._make_request('POST', '/api/retrain-model', data=training_data)
+            return response
+        except Exception as e:
+            logger.error(f"Error retraining model: {e}")
+            raise
+    
+    async def update_model_metrics(self, metrics_data: Dict) -> bool:
+        """Update metrics for a model version"""
+        try:
+            version = metrics_data.get('version', 'v1')
+            response = await self._make_request('PUT', f'/api/model-metrics/{version}', data=metrics_data)
+            return response.get('success', False)
+        except Exception as e:
+            logger.error(f"Error updating model metrics: {e}")
+            return False
+    
+    async def create_model_version(self, version_data: Dict) -> Dict:
+        """Create a new model version entry"""
+        try:
+            response = await self._make_request('POST', '/api/model-versions', data=version_data)
+            return response
+        except Exception as e:
+            logger.error(f"Error creating model version: {e}")
+            raise
+    
+    async def get_vamos_analysis(self, reference_id: str) -> Dict:
+        """Get VAMOS analysis results for reference data"""
+        try:
+            response = await self._make_request('GET', f'/api/vamos-analysis/{reference_id}')
+            return response
+        except Exception as e:
+            logger.error(f"Error fetching VAMOS analysis: {e}")
+            return {}
+    
+    async def log_training_event(self, event_data: Dict) -> bool:
+        """Log a training event"""
+        try:
+            response = await self._make_request('POST', '/api/training-events', data=event_data)
+            return response.get('success', False)
+        except Exception as e:
+            logger.error(f"Error logging training event: {e}")
+            return False
     # =================
     # File Processing Utilities
     # =================
