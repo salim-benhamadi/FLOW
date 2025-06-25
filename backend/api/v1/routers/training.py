@@ -1,334 +1,286 @@
-# backend/api/routes/training_routes.py
+# backend/api/v1/routers/training.py
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.orm import Session
+from sqlalchemy import text
 from typing import List, Dict, Optional
 from datetime import datetime
-import numpy as np
-from scipy import stats
-import pickle
-import os
 import uuid
-
-from backend.models import training_models
-from backend.schemas import training_schemas
-from backend.services import training_service
+import logging
 
 from backend.db.database import DatabaseConnection
-db = DatabaseConnection()
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 @router.get("/model-versions")
 async def get_model_versions():
     """Get all available model versions"""
     try:
-        versions = db.query(training_models.ModelVersion).order_by(
-            training_models.ModelVersion.version_number.desc()
-        ).all()
+        db = DatabaseConnection()
         
-        return {
-            "versions": [f"v{v.version_number}" for v in versions]
-        }
+        # Use raw SQL instead of ORM
+        query = """
+        SELECT version_number 
+        FROM model_versions 
+        ORDER BY version_number DESC
+        """
+        
+        with db.get_connection() as conn:
+            result = conn.execute(text(query))
+            versions = [f"v{row[0]}" for row in result]
+            
+            # If no versions exist, create default v1
+            if not versions:
+                create_query = """
+                INSERT INTO model_versions (version_number, status, confidence_score)
+                VALUES (1, 'active', 0.95)
+                ON CONFLICT (version_number) DO NOTHING
+                """
+                conn.execute(text(create_query))
+                conn.commit()
+                versions = ['v1']
+        
+        return {"versions": versions}
+        
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Error getting model versions: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
 @router.get("/model-metrics")
-async def get_model_metrics(
-    version: Optional[str] = Query(None)
-):
+async def get_model_metrics(version: Optional[str] = Query(None)):
     """Get metrics for a specific model version or latest"""
     try:
-        version_number = int(version[1:]) if version else None
+        db = DatabaseConnection()
         
-        query = db.query(training_models.VersionMetrics)
+        if version:
+            # Extract version number (remove 'v' prefix)
+            version_number = int(version[1:]) if version.startswith('v') else int(version)
+            
+            query = """
+            SELECT 
+                vm.accuracy,
+                vm.confidence, 
+                vm.error_rate,
+                vm.vamos_score,
+                vm.created_at,
+                mv.status,
+                mv.version_number
+            FROM version_metrics vm
+            JOIN model_versions mv ON vm.model_version_id = mv.id
+            WHERE mv.version_number = :version_number
+            ORDER BY vm.created_at DESC
+            LIMIT 50
+            """
+            params = {"version_number": version_number}
+        else:
+            query = """
+            SELECT 
+                vm.accuracy,
+                vm.confidence,
+                vm.error_rate, 
+                vm.vamos_score,
+                vm.created_at,
+                mv.status,
+                mv.version_number
+            FROM version_metrics vm
+            JOIN model_versions mv ON vm.model_version_id = mv.id
+            ORDER BY vm.created_at DESC
+            LIMIT 50
+            """
+            params = {}
         
-        if version_number:
-            model_version = db.query(training_models.ModelVersion).filter(
-                training_models.ModelVersion.version_number == version_number
-            ).first()
-            if model_version:
-                query = query.filter(
-                    training_models.VersionMetrics.model_version_id == model_version.id
-                )
+        with db.get_connection() as conn:
+            result = conn.execute(text(query), params)
+            metrics = []
+            
+            for row in result:
+                metrics.append({
+                    "accuracy": float(row[0]) if row[0] else 0.0,
+                    "confidence": float(row[1]) if row[1] else 0.0,
+                    "error_rate": float(row[2]) if row[2] else 0.0,
+                    "vamos_score": float(row[3]) if row[3] else 0.0,
+                    "created_at": row[4].isoformat() if row[4] else "",
+                    "status": row[5] or "active",
+                    "model_version": f"v{row[6]}" if row[6] else "v1"
+                })
         
-        metrics = query.order_by(
-            training_models.VersionMetrics.created_at.desc()
-        ).limit(50).all()
+        return {"metrics": metrics}
         
-        return {
-            "metrics": [
-                {
-                    "accuracy": m.accuracy,
-                    "confidence": m.confidence,
-                    "error_rate": m.error_rate,
-                    "vamos_score": m.vamos_score,
-                    "model_version": f"v{m.model_version.version_number}",
-                    "created_at": m.created_at.isoformat(),
-                    "status": m.model_version.status
-                }
-                for m in metrics
-            ]
-        }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Error getting model metrics: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
 @router.get("/model-versions/comparison")
 async def get_version_comparison():
     """Get comparison data across all model versions"""
     try:
-        versions = db.query(training_models.ModelVersion).all()
+        db = DatabaseConnection()
         
-        comparison_data = []
-        for version in versions:
-            latest_metrics = db.query(training_models.VersionMetrics).filter(
-                training_models.VersionMetrics.model_version_id == version.id
-            ).order_by(
-                training_models.VersionMetrics.created_at.desc()
-            ).first()
+        query = """
+        SELECT DISTINCT
+            mv.version_number,
+            mv.created_at,
+            mv.training_data_ref,
+            vm.accuracy,
+            vm.confidence,
+            vm.error_rate
+        FROM model_versions mv
+        LEFT JOIN version_metrics vm ON mv.id = vm.model_version_id
+        WHERE vm.id = (
+            SELECT id FROM version_metrics vm2 
+            WHERE vm2.model_version_id = mv.id 
+            ORDER BY vm2.created_at DESC 
+            LIMIT 1
+        )
+        ORDER BY mv.version_number DESC
+        """
+        
+        with db.get_connection() as conn:
+            result = conn.execute(text(query))
+            comparison_data = []
             
-            if latest_metrics:
+            for row in result:
                 comparison_data.append({
-                    "version": f"v{version.version_number}",
-                    "created_at": version.created_at.isoformat(),
-                    "accuracy": latest_metrics.accuracy * 100,
-                    "confidence": latest_metrics.confidence * 100,
-                    "error_rate": latest_metrics.error_rate * 100,
-                    "training_info": f"{version.training_data_ref}"
+                    "version": f"v{row[0]}",
+                    "created_at": row[1].isoformat() if row[1] else "",
+                    "training_info": row[2] or "Initial version",
+                    "accuracy": float(row[3] * 100) if row[3] else 0.0,
+                    "confidence": float(row[4] * 100) if row[4] else 0.0,
+                    "error_rate": float(row[5] * 100) if row[5] else 0.0
                 })
         
         return {"comparison_data": comparison_data}
+        
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Error getting version comparison: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
 @router.get("/training-history")
 async def get_training_history():
     """Get model training history"""
     try:
-        events = db.query(training_models.TrainingEvent).order_by(
-            training_models.TrainingEvent.timestamp.desc()
-        ).limit(100).all()
+        db = DatabaseConnection()
         
-        history = []
-        for event in events:
-            history.append({
-                "timestamp": event.timestamp.isoformat(),
-                "version": f"v{event.model_version.version_number}",
-                "event_type": event.event_type,
-                "details": {
-                    "confidence": event.confidence_score,
-                    "insertion": event.matched_insertion,
-                    "product": event.matched_product,
-                    "duration": event.training_duration,
-                    "accuracy": event.final_accuracy,
-                    "status": event.status,
-                    "user": event.initiated_by
-                }
-            })
+        query = """
+        SELECT 
+            te.created_at,
+            mv.version_number,
+            te.event_type,
+            te.matched_insertion,
+            te.matched_product,
+            te.training_duration,
+            te.final_accuracy
+        FROM training_events te
+        JOIN model_versions mv ON te.model_version_id = mv.id
+        ORDER BY te.created_at DESC
+        LIMIT 100
+        """
+        
+        with db.get_connection() as conn:
+            result = conn.execute(text(query))
+            history = []
+            
+            for row in result:
+                history.append({
+                    "timestamp": row[0].isoformat() if row[0] else "",
+                    "version": f"v{row[1]}" if row[1] else "v1",
+                    "event_type": row[2] or "UNKNOWN",
+                    "details": {
+                        "insertion": row[3],
+                        "product": row[4], 
+                        "duration": row[5],
+                        "accuracy": float(row[6]) if row[6] else 0.0,
+                        "status": "completed"
+                    }
+                })
         
         return {"history": history}
+        
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.post("/compare-distributions")
-async def compare_distributions(
-    request: training_schemas.DistributionComparisonRequest):
-    """Compare distributions between new data and reference"""
-    try:
-        comparison_service = training_service.DistributionComparisonService()
-        
-        # Get reference data
-        reference_data = db.query(training_models.ReferenceData).filter(
-            training_models.ReferenceData.id == request.reference_id
-        ).first()
-        
-        if not reference_data:
-            raise HTTPException(status_code=404, detail="Reference data not found")
-        
-        # Calculate confidence and match score
-        confidence = comparison_service.calculate_confidence(
-            request.new_data,
-            reference_data.data
-        )
-        
-        match_score = comparison_service.calculate_match_score(
-            request.new_data,
-            reference_data
-        )
-        
-        return {
-            "confidence": confidence,
-            "match_score": match_score,
-            "reference_info": {
-                "product": reference_data.product,
-                "lot": reference_data.lot,
-                "insertion": reference_data.insertion
-            }
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.post("/retrain-model")
-async def retrain_model(
-    request: training_schemas.RetrainModelRequest):
-    """Trigger model retraining with specific data"""
-    try:
-        # Create new model version
-        current_version = db.query(training_models.ModelVersion).order_by(
-            training_models.ModelVersion.version_number.desc()
-        ).first()
-        
-        new_version_number = (current_version.version_number + 1) if current_version else 1
-        
-        new_version = training_models.ModelVersion(
-            id=str(uuid.uuid4()),
-            version_number=new_version_number,
-            created_at=datetime.utcnow(),
-            parent_version=current_version.id if current_version else None,
-            training_data_ref=request.training_data.get('reference_id'),
-            confidence_score=request.training_data.get('confidence', 0),
-            status="training"
-        )
-        db.add(new_version)
-        
-        # Log training event
-        training_event = training_models.TrainingEvent(
-            id=str(uuid.uuid4()),
-            model_version_id=new_version.id,
-            timestamp=datetime.utcnow(),
-            event_type="AUTOMATIC_RETRAIN" if request.training_data.get('automatic') else "MANUAL_RETRAIN",
-            confidence_score=request.training_data.get('confidence', 0),
-            matched_insertion=request.training_data.get('insertion'),
-            matched_product=request.training_data.get('product'),
-            initiated_by=request.training_data.get('user', 'VAMOS'),
-            status="in_progress"
-        )
-        db.add(training_event)
-        db.commit()
-        
-        # Trigger actual training (async task)
-        model_training_service = training_service.ModelTrainingService()
-        training_result = await model_training_service.train_model(
-            new_version.id,
-            request.training_data
-        )
-        
-        # Update status
-        new_version.status = "active"
-        training_event.status = "completed"
-        training_event.training_duration = training_result.get('duration')
-        training_event.final_accuracy = training_result.get('accuracy')
-        db.commit()
-        
-        return {
-            "version": f"v{new_version_number}",
-            "status": "completed",
-            "metrics": training_result
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.put("/model-metrics/{version}")
-async def update_model_metrics(
-    version: str,
-    request: training_schemas.UpdateMetricsRequest):
-    """Update metrics for a model version"""
-    try:
-        version_number = int(version[1:])
-        
-        model_version = db.query(training_models.ModelVersion).filter(
-            training_models.ModelVersion.version_number == version_number
-        ).first()
-        
-        if not model_version:
-            raise HTTPException(status_code=404, detail="Model version not found")
-        
-        # Add new metrics entry
-        new_metrics = training_models.VersionMetrics(
-            id=str(uuid.uuid4()),
-            model_version_id=model_version.id,
-            accuracy=request.metrics.get('accuracy', 0),
-            confidence=request.metrics.get('confidence', 0),
-            error_rate=request.metrics.get('error_rate', 0),
-            vamos_score=request.metrics.get('vamos_score', 0),
-            created_at=datetime.utcnow()
-        )
-        db.add(new_metrics)
-        db.commit()
-        
-        return {"success": True}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Error getting training history: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
 @router.post("/model-versions")
-async def create_model_version(
-    request: training_schemas.CreateVersionRequest):
+async def create_model_version(version_data: Dict):
     """Create a new model version entry"""
     try:
-        new_version = training_models.ModelVersion(
-            id=str(uuid.uuid4()),
-            version_number=request.version_number,
-            created_at=datetime.utcnow(),
-            parent_version=request.parent_version,
-            training_data_ref=request.training_data_ref,
-            confidence_score=request.confidence_score,
-            status=request.status or "active"
-        )
-        db.add(new_version)
-        db.commit()
+        db = DatabaseConnection()
+        
+        query = """
+        INSERT INTO model_versions (
+            version_number, status, confidence_score, model_path, created_at
+        ) VALUES (
+            :version_number, :status, :confidence_score, :model_path, :created_at
+        ) RETURNING id
+        """
+        
+        params = {
+            "version_number": version_data.get("version_number", 1),
+            "status": version_data.get("status", "active"),
+            "confidence_score": version_data.get("confidence_score", 0.95),
+            "model_path": version_data.get("model_path"),
+            "created_at": datetime.utcnow()
+        }
+        
+        with db.get_connection() as conn:
+            result = conn.execute(text(query), params)
+            version_id = result.scalar()
+            conn.commit()
         
         return {
-            "id": new_version.id,
-            "version": f"v{new_version.version_number}",
-            "status": new_version.status
+            "id": version_id,
+            "version": f"v{params['version_number']}",
+            "status": params["status"]
         }
+        
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Error creating model version: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
-@router.get("/vamos-analysis/{reference_id}")
-async def get_vamos_analysis(
-    reference_id: str):
-    """Get VAMOS analysis results for reference data"""
+@router.put("/model-metrics/{version}")
+async def update_model_metrics(version: str, metrics_data: Dict):
+    """Update metrics for a model version"""
     try:
-        analysis = db.query(training_models.VamosAnalysis).filter(
-            training_models.VamosAnalysis.reference_id == reference_id
-        ).first()
+        db = DatabaseConnection()
+        version_number = int(version[1:]) if version.startswith('v') else int(version)
         
-        if not analysis:
-            return {"status": "no_analysis"}
+        # First, get the model version ID
+        get_version_query = """
+        SELECT id FROM model_versions WHERE version_number = :version_number
+        """
         
-        return {
-            "reference_id": analysis.reference_id,
-            "distribution_score": analysis.distribution_score,
-            "confidence_level": analysis.confidence_level,
-            "matched_patterns": analysis.matched_patterns,
-            "recommendations": analysis.recommendations,
-            "analyzed_at": analysis.analyzed_at.isoformat()
-        }
+        with db.get_connection() as conn:
+            result = conn.execute(text(get_version_query), {"version_number": version_number})
+            version_row = result.fetchone()
+            
+            if not version_row:
+                raise HTTPException(status_code=404, detail="Model version not found")
+            
+            model_version_id = version_row[0]
+            
+            # Insert new metrics
+            insert_query = """
+            INSERT INTO version_metrics (
+                model_version_id, accuracy, confidence, error_rate, vamos_score, created_at
+            ) VALUES (
+                :model_version_id, :accuracy, :confidence, :error_rate, :vamos_score, :created_at
+            )
+            """
+            
+            params = {
+                "model_version_id": model_version_id,
+                "accuracy": metrics_data.get("accuracy", 0.0),
+                "confidence": metrics_data.get("confidence", 0.0), 
+                "error_rate": metrics_data.get("error_rate", 0.0),
+                "vamos_score": metrics_data.get("vamos_score", 0.0),
+                "created_at": datetime.utcnow()
+            }
+            
+            conn.execute(text(insert_query), params)
+            conn.commit()
+        
+        return {"success": True}
+        
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.post("/training-events")
-async def log_training_event(
-    request: training_schemas.TrainingEventRequest):
-    """Log a training event"""
-    try:
-        event = training_models.TrainingEvent(
-            id=str(uuid.uuid4()),
-            model_version_id=request.model_version_id,
-            timestamp=datetime.utcnow(),
-            event_type=request.event_type,
-            confidence_score=request.confidence_score,
-            matched_insertion=request.matched_insertion,
-            matched_product=request.matched_product,
-            training_duration=request.training_duration,
-            final_accuracy=request.final_accuracy,
-            status=request.status,
-            initiated_by=request.initiated_by
-        )
-        db.add(event)
-        db.commit()
-        
-        return {"success": True, "event_id": event.id}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Error updating model metrics: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")

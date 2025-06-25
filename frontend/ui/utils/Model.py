@@ -127,21 +127,18 @@ class DistributionSimilarityModel:
     def _get_model_path_by_version(self, version: str) -> str:
         """Get model file path for a specific version"""
         version_map = {
-            'v1': 'lightgbm_model.txt',
-            'v2': 'lightgbm_model_v2.txt',
-            'v3': 'lightgbm_model_v3.txt',
-            'latest': 'lightgbm_model_latest.txt'
+            'v1': 'my_distribution_model.txt',
         }
         
-        filename = version_map.get(version, f'lightgbm_model_{version}.txt')
+        filename = version_map.get(version, f'{version}.txt')
         return str(self.model_base_path / filename)
     
     def _get_latest_model_path(self) -> str:
         """Find the latest model version available"""
-        model_files = list(self.model_base_path.glob('lightgbm_model*.txt'))
+        model_files = list(self.model_base_path.glob('my_distribution_model*.txt'))
         
         if not model_files:
-            return str(self.model_base_path / 'lightgbm_model.txt')
+            return str(self.model_base_path / 'my_distribution_model.txt')
         
         # Sort by modification time to get the latest
         latest_file = max(model_files, key=lambda p: p.stat().st_mtime)
@@ -149,10 +146,10 @@ class DistributionSimilarityModel:
     
     def _extract_version_from_path(self, model_path: str) -> str:
         """Extract version from model file path"""
-        match = re.search(r'lightgbm_model_v(\d+)', model_path)
+        match = re.search(r'my_distribution_model_v(\d+)', model_path)
         if match:
             return f'v{match.group(1)}'
-        elif 'lightgbm_model.txt' in model_path:
+        elif 'my_distribution_model.txt' in model_path:
             return 'v1'
         return 'unknown'
     

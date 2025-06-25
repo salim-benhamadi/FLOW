@@ -263,27 +263,30 @@ class DataProcessor(QThread):
             current_selected_numbers = []
             
             for test in available_tests:
-                if test in desc_rows.columns:
+                if test in df_info_1.columns and test in df_info_2.columns:
                     current_selected_items.append(test)
                     test_number = desc_rows[test].loc['<+ParameterNumber>']
                     current_selected_numbers.append(str(test_number))
 
             columns = desc_rows[current_selected_items].loc['<+ParameterNumber>'].astype(str)
+            df_lsl1 = EFF.get_description_rows(df_input, header="<+ParameterName>").loc['<LIMIT:VALID:LOWER_VALUE>']
+            df_usl1 = EFF.get_description_rows(df_input, header="<+ParameterName>").loc['<LIMIT:VALID:UPPER_VALUE>']
+            df_lsl2 = EFF.get_description_rows(df_reference, header="<+ParameterName>").loc['<LIMIT:VALID:LOWER_VALUE>']
+            df_usl2 = EFF.get_description_rows(df_reference, header="<+ParameterName>").loc['<LIMIT:VALID:UPPER_VALUE>']
             
-            df_lsl1 = EFF.get_description_rows(df_input, header="<+ParameterName>").loc['<-LoLimit>']
-            df_usl1 = EFF.get_description_rows(df_input, header="<+ParameterName>").loc['<+HiLimit>']
-            df_lsl2 = EFF.get_description_rows(df_reference, header="<+ParameterName>").loc['<-LoLimit>']
-            df_usl2 = EFF.get_description_rows(df_reference, header="<+ParameterName>").loc['<+HiLimit>']
-            
-            lsl_input = df_lsl1[current_selected_items].values.astype(float)
-            usl_input = df_usl1[current_selected_items].values.astype(float)
-            lsl_reference = df_lsl2[current_selected_items].values.astype(float)
-            usl_reference = df_usl2[current_selected_items].values.astype(float)
+            def to_float_or_nan(arr):
+                return np.array([float(x) if str(x).strip() != '' else np.nan for x in arr])
+
+            lsl_input = to_float_or_nan(df_lsl1[current_selected_items].values)
+            usl_input = to_float_or_nan(df_usl1[current_selected_items].values)
+            lsl_reference = to_float_or_nan(df_lsl2[current_selected_items].values)
+            usl_reference = to_float_or_nan(df_usl2[current_selected_items].values)
 
             TNUMBERS = list(columns)
             
-            df_1 = df_input.loc[1:, columns]
-            df_2 = df_reference.loc[1:, columns]
+            df_1 = EFF.get_value_rows(df_input, header='<+ParameterNumber>')[columns]
+        
+            df_2 = EFF.get_value_rows(df_reference, header='<+ParameterNumber>')[columns]
             
             sample_indices_1 = self._get_representative_sample(df_1)
             sample_indices_2 = self._get_representative_sample(df_2)

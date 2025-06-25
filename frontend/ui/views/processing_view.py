@@ -66,20 +66,13 @@ class ProcessingPage(QWidget):
             }
         """)
         backButton.clicked.connect(self.show_upload_signal.emit)
-        
-        headerTitle = QLabel("Processing Files")
-        headerTitle.setFont(QFont("Arial", 16, QFont.Bold))
-        headerTitle.setAlignment(Qt.AlignCenter)
-        
+
         settingsLabel = QLabel("")
         settingsLabel.setFont(QFont("Arial", 9))
         settingsLabel.setStyleSheet("color: #6B7280;")
         
         headerLayout.addWidget(backButton)
         headerLayout.addStretch()
-        headerLayout.addWidget(headerTitle)
-        headerLayout.addStretch()
-        headerLayout.addWidget(settingsLabel)
         
         mainLayout.addLayout(headerLayout)
 
