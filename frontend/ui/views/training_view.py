@@ -535,7 +535,7 @@ class RetrainingTab(QWidget):
                 self.current_worker = None
 
     async def _async_process_reference_data(self, file_path, product, lot, insertion, 
-                                           use_for_retraining=False, update_existing=False):
+                                       use_for_retraining=False, update_existing=False):
         from api.client import APIClient
         
         worker_api_client = None
@@ -549,51 +549,118 @@ class RetrainingTab(QWidget):
             eff_data = await processor.process_eff_file(file_path, product, lot, insertion)
             
             if use_for_retraining:
-                # Find matching reference data
-                self.current_worker.progress.emit(30, "VAMOS Analysis", "Finding matching reference data...")
-                
-                metadata = {'product': product, 'lot': lot, 'insertion': insertion}
-                best_match, match_score = self.distribution_comparator.find_best_match(
-                    metadata, self.reference_data
-                )
-                
-                if best_match:
-                    self.current_worker.progress.emit(50, "VAMOS Analysis", 
-                                                    f"Found match with {match_score}% similarity")
+                try:
+                    # Validate we have reference data
+                    if not self.reference_data:
+                        self.current_worker.progress.emit(
+                            100, "VAMOS Analysis", 
+                            "No reference data available for comparison"
+                        )
+                        logger.warning("No reference data available for VAMOS analysis")
+                        return eff_data
                     
-                    # Calculate confidence
-                    confidence = self.distribution_comparator.calculate_confidence(
-                        eff_data, [best_match]
+                    # Find matching reference data
+                    self.current_worker.progress.emit(30, "VAMOS Analysis", "Finding matching reference data...")
+                    
+                    metadata = {'product': product, 'lot': lot, 'insertion': insertion}
+                    best_match, match_score = self.distribution_comparator.find_best_match(
+                        metadata, self.reference_data
                     )
                     
-                    self.current_worker.progress.emit(70, "VAMOS Analysis", 
-                                                    f"Distribution confidence: {confidence:.1f}%")
-                    
-                    if confidence >= 95:
-                        # Trigger automatic retraining
-                        self.current_worker.progress.emit(80, "Model Training", 
-                                                        "High confidence detected - Starting automatic retraining...")
+                    if best_match:
+                        self.current_worker.progress.emit(50, "VAMOS Analysis", 
+                                                        f"Found match with {match_score}% similarity")
                         
-                        # Perform retraining
-                        await worker_api_client.retrain_model_with_data(eff_data)
+                        # Calculate confidence with error handling
+                        try:
+                            confidence = self.distribution_comparator.calculate_confidence(
+                                eff_data, [best_match]
+                            )
+                        except Exception as e:
+                            logger.error(f"Error calculating confidence: {e}")
+                            self.current_worker.progress.emit(
+                                100, "VAMOS Analysis", 
+                                "Error in distribution analysis"
+                            )
+                            return eff_data
                         
-                        # Create new model version
-                        new_version = self.version_manager.current_version + 1
-                        self.current_worker.progress.emit(90, "Model Training", 
-                                                        f"Created model version v{new_version}")
+                        self.current_worker.progress.emit(70, "VAMOS Analysis", 
+                                                        f"Distribution confidence: {confidence:.1f}%")
                         
-                        # Update metrics
-                        await worker_api_client.update_model_metrics({
-                            'version': new_version,
-                            'confidence': confidence,
-                            'training_data': metadata
-                        })
+                        if confidence >= 95:
+                            # Trigger automatic retraining
+                            self.current_worker.progress.emit(80, "Model Training", 
+                                                            "High confidence detected - Starting automatic retraining...")
+                            
+                            # Prepare training data with proper format
+                            training_data = {
+                                'reference_id': best_match.get('reference_id', ''),
+                                'reference_data': [best_match],  # Include reference data
+                                'new_data': eff_data,  # Include new data
+                                'confidence': confidence,
+                                'insertion': insertion,
+                                'product': product,
+                                'lot': lot,
+                                'automatic': True,
+                                'user': 'VAMOS',
+                                'version': self.version_manager.current_version
+                            }
+                            
+                            try:
+                                # Perform retraining
+                                retrain_result = await worker_api_client.retrain_model_with_data(training_data)
+                                
+                                if retrain_result.get('status') == 'completed':
+                                    # Create new model version
+                                    new_version = retrain_result.get('version', f'v{self.version_manager.current_version + 1}')
+                                    
+                                    self.current_worker.progress.emit(90, "Model Training", 
+                                                                    f"Created model version {new_version}")
+                                    
+                                    # Update metrics
+                                    await worker_api_client.update_model_metrics({
+                                        'version': new_version,
+                                        'confidence': confidence,
+                                        'accuracy': retrain_result.get('metrics', {}).get('accuracy', 0),
+                                        'training_data': metadata
+                                    })
+                                    
+                                    # Mark reference data as used for training
+                                    if best_match.get('reference_id'):
+                                        await worker_api_client.update_reference_data(
+                                            best_match['reference_id'],
+                                            {
+                                                'used_for_training': True,
+                                                'training_version': new_version,
+                                                'quality_score': confidence
+                                            }
+                                        )
+                                    
+                                    # Update local version manager
+                                    version_num = int(new_version[1:]) if new_version.startswith('v') else 2
+                                    self.version_manager.current_version = version_num
+                                    
+                                    self.current_worker.progress.emit(100, "VAMOS Analysis", 
+                                                                    f"Training completed successfully - Model {new_version} created")
+                                else:
+                                    error_msg = retrain_result.get('message', 'Unknown error')
+                                    self.current_worker.progress.emit(100, "Model Training", 
+                                                                    f"Training failed: {error_msg}")
+                                    
+                            except Exception as e:
+                                logger.error(f"Error during model retraining: {e}")
+                                self.current_worker.progress.emit(100, "Model Training", 
+                                                                f"Training error: {str(e)}")
+                        else:
+                            self.current_worker.progress.emit(100, "VAMOS Analysis", 
+                                                            f"Confidence too low ({confidence:.1f}%) - Manual review required")
                     else:
                         self.current_worker.progress.emit(100, "VAMOS Analysis", 
-                                                        f"Confidence too low ({confidence:.1f}%) - Manual review required")
-                else:
+                                                        "No matching reference data found with same insertion")
+                except Exception as e:
+                    logger.error(f"Error in VAMOS analysis: {e}", exc_info=True)
                     self.current_worker.progress.emit(100, "VAMOS Analysis", 
-                                                    "No matching reference data found")
+                                                    f"Analysis error: {str(e)}")
             
             logger.debug(f"Processing completed successfully")
             return eff_data

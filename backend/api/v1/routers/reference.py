@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Body, HTTPException, UploadFile, File
+from fastapi import APIRouter, Body, HTTPException, UploadFile, File, Depends
+from sqlalchemy.orm import Session
 from typing import List, Dict
 import pandas as pd
 import logging
@@ -165,4 +166,65 @@ async def save_reference_data(data: Dict = Body(...)):
 
     except Exception as e:
         logger.error(f"Error saving reference data: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.put("/reference/{reference_id}")
+async def update_reference_data(
+    reference_id: str,
+    update_data: Dict,
+):
+    """Update reference data with training information"""
+    try:
+        # Build update query dynamically based on provided fields
+        update_fields = []
+        params = {"reference_id": reference_id}
+        
+        if "used_for_training" in update_data:
+            update_fields.append("used_for_training = :used_for_training")
+            params["used_for_training"] = update_data["used_for_training"]
+        
+        if "training_version" in update_data:
+            update_fields.append("training_version = :training_version")
+            params["training_version"] = update_data["training_version"]
+        
+        if "distribution_hash" in update_data:
+            update_fields.append("distribution_hash = :distribution_hash")
+            params["distribution_hash"] = update_data["distribution_hash"]
+        
+        if "quality_score" in update_data:
+            update_fields.append("quality_score = :quality_score")
+            params["quality_score"] = update_data["quality_score"]
+        
+        if not update_fields:
+            raise HTTPException(status_code=400, detail="No valid fields to update")
+        
+        # Add updated_at
+        update_fields.append("updated_at = CURRENT_TIMESTAMP")
+        
+        query = f"""
+            UPDATE reference_data 
+            SET {', '.join(update_fields)}
+            WHERE reference_id = :reference_id
+            RETURNING reference_id
+        """
+        
+        result = db.execute(query, params)
+        updated = result.fetchone()
+        
+        if not updated:
+            raise HTTPException(status_code=404, detail="Reference data not found")
+        
+        db.commit()
+        
+        return {
+            "status": "success",
+            "reference_id": reference_id,
+            "updated_fields": list(update_data.keys())
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating reference data: {str(e)}")
+        db.rollback()
         raise HTTPException(status_code=500, detail=str(e))

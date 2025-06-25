@@ -4,28 +4,64 @@ from typing import List, Dict, Any, Optional
 import lightgbm as lgb
 import os
 import logging
+import re
 from backend.db.database import DatabaseConnection
 from backend.core.config import get_settings
 from backend.services.effio_service import EFF
 
-# Set up logging
 logger = logging.getLogger(__name__)
 
 class ModelService:
     def __init__(self):
         self.settings = get_settings()
         self.db = DatabaseConnection()
-        self.model = self._load_model()
+        self.current_version = None
+        self.model = None
+        self._initialize_model()
         
-    def _load_model(self) -> Optional[lgb.Booster]:
-        """Load the LightGBM model with robust error handling"""
+    def _initialize_model(self):
+        """Initialize model with version support"""
         try:
-            model_path = self.settings.MODEL_PATH
+            # Get active model version from settings
+            settings = self._get_active_settings()
+            if settings and 'model_version' in settings:
+                self.current_version = settings['model_version']
+                self.model = self._load_model(self.current_version)
+            else:
+                # Load latest version
+                self.model = self._load_latest_model()
+        except Exception as e:
+            logger.error(f"Error initializing model: {e}")
+            self.model = None
+    
+    def _get_active_settings(self) -> Optional[Dict]:
+        """Get active model settings from database"""
+        try:
+            query = """
+                SELECT model_version, sensitivity, auto_update
+                FROM model_settings
+                ORDER BY created_at DESC
+                LIMIT 1
+            """
+            result = self.db.execute_query_sync(query)
+            return result[0] if result else None
+        except Exception as e:
+            logger.error(f"Error getting settings: {e}")
+            return None
+    
+    def _load_model(self, version: Optional[str] = None) -> Optional[lgb.Booster]:
+        """Load the LightGBM model with version support"""
+        try:
+            if version and version != 'v1':
+                # Load specific version
+                model_path = f"{self.settings.MODEL_PATH.replace('.pkl', '')}_{version}.pkl"
+            else:
+                # Load base model
+                model_path = self.settings.MODEL_PATH
             
             # Check if model file exists
             if not os.path.exists(model_path):
                 logger.warning(f"Model file not found at: {model_path}")
-                logger.info("Application will run without ML model - distribution analysis will use statistical methods")
                 return None
             
             # Check if file is readable
@@ -35,13 +71,51 @@ class ModelService:
             
             # Try to load the model
             model = lgb.Booster(model_file=model_path)
-            logger.info(f"Model loaded successfully from: {model_path}")
+            logger.info(f"Model loaded successfully from: {model_path} (version: {version or 'v1'})")
+            self.current_version = version or 'v1'
             return model
             
         except Exception as e:
-            logger.error(f"Failed to load model from {self.settings.MODEL_PATH}: {str(e)}")
-            logger.info("Application will continue without ML model")
+            logger.error(f"Failed to load model: {str(e)}")
             return None
+    
+    def _load_latest_model(self) -> Optional[lgb.Booster]:
+        """Load the latest available model version"""
+        try:
+            # Find all model files
+            model_dir = os.path.dirname(self.settings.MODEL_PATH)
+            model_base = os.path.basename(self.settings.MODEL_PATH).replace('.pkl', '')
+            
+            if not os.path.exists(model_dir):
+                return None
+            
+            # Find version files
+            version_pattern = re.compile(f"{model_base}_v(\\d+)\\.pkl")
+            versions = []
+            
+            for filename in os.listdir(model_dir):
+                match = version_pattern.match(filename)
+                if match:
+                    versions.append(int(match.group(1)))
+            
+            if versions:
+                # Load highest version
+                latest_version = max(versions)
+                return self._load_model(f"v{latest_version}")
+            else:
+                # Load base model
+                return self._load_model()
+                
+        except Exception as e:
+            logger.error(f"Error finding latest model: {e}")
+            return None
+    
+    def reload_model(self, version: Optional[str] = None):
+        """Reload model with specific version"""
+        if version:
+            self.model = self._load_model(version)
+        else:
+            self._initialize_model()
     
     def _load_reference_data(self) -> Optional[pd.DataFrame]:
         """Load reference data with error handling"""
@@ -87,6 +161,7 @@ class ModelService:
                 "results": results.to_dict(orient='records'),
                 "predictions": predictions.tolist() if predictions is not None else [],
                 "model_available": self.model is not None,
+                "model_version": self.current_version,
                 "reference_data_available": df_reference is not None
             }
             
@@ -119,6 +194,7 @@ class ModelService:
                 "results": [stats],
                 "predictions": [],
                 "model_available": False,
+                "model_version": None,
                 "reference_data_available": False,
                 "analysis_type": "statistical_only"
             }
@@ -128,16 +204,15 @@ class ModelService:
                 "results": [],
                 "predictions": [],
                 "model_available": False,
+                "model_version": None,
                 "reference_data_available": False,
-                "error": "Analysis failed"
+                "error": str(e)
             }
     
     def _process_data(self, df_input: pd.DataFrame, df_reference: pd.DataFrame, 
                      selected_items: List[str]) -> pd.DataFrame:
         """Process input data and calculate features"""
         try:
-            # Your existing data processing logic here
-            # For now, return a simple processed dataframe
             processed_data = pd.DataFrame()
             
             for item in selected_items:
@@ -217,22 +292,34 @@ class ModelService:
             if new_model is None:
                 return {"status": "error", "message": "Model training failed"}
             
-            # Try to save model
+            # Calculate new version number
+            current_num = int(self.current_version[1:]) if self.current_version and self.current_version.startswith('v') else 1
+            new_version = f"v{current_num + 1}"
+            
+            # Save new model version
             try:
                 # Ensure directory exists
                 model_dir = os.path.dirname(self.settings.MODEL_PATH)
                 os.makedirs(model_dir, exist_ok=True)
                 
-                new_model.save_model(self.settings.MODEL_PATH)
-                logger.info(f"Model saved successfully to: {self.settings.MODEL_PATH}")
+                # Save with version
+                model_path = f"{self.settings.MODEL_PATH.replace('.pkl', '')}_{new_version}.pkl"
+                new_model.save_model(model_path)
+                logger.info(f"Model saved successfully to: {model_path}")
+                
+                # Update current model
+                self.model = new_model
+                self.current_version = new_version
+                
             except Exception as e:
                 logger.error(f"Failed to save model: {str(e)}")
-                # Continue anyway - we can still use the model in memory
+                return {"status": "error", "message": f"Failed to save model: {str(e)}"}
             
-            # Update model instance
-            self.model = new_model
-            
-            return {"status": "success", "message": "Model retrained successfully"}
+            return {
+                "status": "success", 
+                "message": "Model retrained successfully",
+                "version": new_version
+            }
             
         except Exception as e:
             logger.error(f"Error in model retraining: {str(e)}")
@@ -242,7 +329,6 @@ class ModelService:
         """Prepare data for model training"""
         try:
             # Add your training data preparation logic here
-            # For now, return the feedback data as-is
             return feedback_data if not feedback_data.empty else None
         except Exception as e:
             logger.error(f"Error preparing training data: {str(e)}")
@@ -251,12 +337,23 @@ class ModelService:
     def _train_model(self, training_data: pd.DataFrame) -> Optional[lgb.Booster]:
         """Train LightGBM model"""
         try:
-            # Add your model training logic here
-            # This is a placeholder implementation
+            # This is a placeholder - implement your actual training logic
             logger.info("Training new model...")
             
-            # Example basic training setup
-            # You'll need to implement this based on your specific requirements
+            # Example: create a simple model
+            # You should replace this with your actual training code
+            params = {
+                'objective': 'regression',
+                'metric': 'rmse',
+                'boosting_type': 'gbdt',
+                'num_leaves': 31,
+                'learning_rate': 0.05,
+                'feature_fraction': 0.9
+            }
+            
+            # Placeholder for actual training
+            # train_data = lgb.Dataset(X_train, label=y_train)
+            # model = lgb.train(params, train_data, num_boost_round=100)
             
             return None  # Replace with actual trained model
             
@@ -264,10 +361,15 @@ class ModelService:
             logger.error(f"Error training model: {str(e)}")
             return None
     
+    def get_model_version(self) -> str:
+        """Get current model version"""
+        return self.current_version or 'v1'
+    
     def health_check(self) -> Dict[str, Any]:
         """Health check for the model service"""
         return {
             "model_loaded": self.model is not None,
+            "model_version": self.current_version,
             "model_path": self.settings.MODEL_PATH,
             "model_path_exists": os.path.exists(self.settings.MODEL_PATH),
             "reference_data_path": self.settings.REFERENCE_DATA_PATH,

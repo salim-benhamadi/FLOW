@@ -619,3 +619,66 @@ class DatabaseConnection:
         except Exception as e:
             logger.error(f"Error getting table statistics: {str(e)}")
             return {}
+    
+    async def update_reference_data(self, reference_id: str, update_data: Dict) -> bool:
+        """Update reference data with training information for VAMOS"""
+        try:
+            # Build update query dynamically based on provided fields
+            update_fields = []
+            params = {"reference_id": reference_id}
+            
+            # Handle each possible field
+            if "used_for_training" in update_data:
+                update_fields.append("used_for_training = :used_for_training")
+                params["used_for_training"] = update_data["used_for_training"]
+            
+            if "training_version" in update_data:
+                update_fields.append("training_version = :training_version")
+                params["training_version"] = update_data["training_version"]
+            
+            if "distribution_hash" in update_data:
+                update_fields.append("distribution_hash = :distribution_hash")
+                params["distribution_hash"] = update_data["distribution_hash"]
+            
+            if "quality_score" in update_data:
+                update_fields.append("quality_score = :quality_score")
+                params["quality_score"] = update_data["quality_score"]
+            
+            if not update_fields:
+                logger.warning("No valid fields to update for reference data")
+                return False
+            
+            # Add updated_at timestamp
+            update_fields.append("updated_at = CURRENT_TIMESTAMP")
+            
+            # Build final query
+            query = f"""
+                UPDATE reference_data 
+                SET {', '.join(update_fields)}
+                WHERE reference_id = :reference_id
+            """
+            
+            # Execute using existing connection method
+            with self.get_connection() as conn:
+                result = conn.execute(text(query), params)
+                # Check if any row was updated
+                return result.rowcount > 0
+                
+        except Exception as e:
+            logger.error(f"Error updating reference data: {str(e)}")
+            return False
+
+    def execute_query_sync(self, query: str, params: Optional[Dict] = None) -> List[Dict]:
+        """Synchronous wrapper for execute_query - use only when necessary"""
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(asyncio.run, self.execute_query(query, params))
+                    return future.result()
+            else:
+                return loop.run_until_complete(self.execute_query(query, params))
+        except Exception as e:
+            logger.error(f"Error in sync query execution: {e}")
+            return []

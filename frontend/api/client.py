@@ -154,7 +154,7 @@ class APIClient:
             raise
 
     async def update_model_settings(self, settings: Dict) -> Dict:
-        """Update model settings"""
+        """Update model settings including active version"""
         try:
             return await self._make_request(
                 "PUT",
@@ -163,6 +163,35 @@ class APIClient:
             )
         except Exception as e:
             logger.error(f"Error updating model settings: {str(e)}")
+            raise
+
+    async def get_active_model_version(self) -> str:
+        """Get the currently active model version"""
+        try:
+            response = await self._make_request("GET", "/api/v1/settings/settings")
+            return response.get('model_version', 'v1')
+        except Exception as e:
+            logger.error(f"Error getting active model version: {e}")
+            return 'v1'
+    
+    async def get_vamos_training_analytics(self) -> List[Dict]:
+        """Get VAMOS training analytics data"""
+        try:
+            return await self._make_request("GET", "/api/v1/training/analytics")
+        except Exception as e:
+            logger.error(f"Error getting VAMOS analytics: {e}")
+            return []
+    
+    async def update_reference_data(self, reference_id: str, update_data: Dict) -> Dict:
+        """Update reference data with training information"""
+        try:
+            return await self._make_request(
+                "PUT",
+                f"/api/v1/reference/{reference_id}",
+                json=update_data
+            )
+        except Exception as e:
+            logger.error(f"Error updating reference data: {str(e)}")
             raise
 
     async def get_settings_history(self) -> List[Dict]:
@@ -521,8 +550,11 @@ class APIClient:
     async def retrain_model_with_data(self, training_data: Dict) -> Dict:
         """Trigger model retraining with specific data"""
         try:
-            response = await self._make_request('POST', '/api/retrain-model', data=training_data)
-            return response
+            return await self._make_request(
+                "POST",
+                "/api/retrain-model",
+                json={"training_data": training_data}
+            )
         except Exception as e:
             logger.error(f"Error retraining model: {e}")
             raise

@@ -10,15 +10,17 @@ import pickle
 import os
 import uuid
 
-from ..database import get_db
-from ..models import training_models
-from ..schemas import training_schemas
-from ..services import training_service
+from backend.models import training_models
+from backend.schemas import training_schemas
+from backend.services import training_service
 
-router = APIRouter(prefix="/api", tags=["Training"])
+from backend.db.database import DatabaseConnection
+db = DatabaseConnection()
+
+router = APIRouter(prefix="/api", tags=["training"])
 
 @router.get("/model-versions")
-async def get_model_versions(db: Session = Depends(get_db)):
+async def get_model_versions():
     """Get all available model versions"""
     try:
         versions = db.query(training_models.ModelVersion).order_by(
@@ -33,8 +35,7 @@ async def get_model_versions(db: Session = Depends(get_db)):
 
 @router.get("/model-metrics")
 async def get_model_metrics(
-    version: Optional[str] = Query(None),
-    db: Session = Depends(get_db)
+    version: Optional[str] = Query(None)
 ):
     """Get metrics for a specific model version or latest"""
     try:
@@ -73,7 +74,7 @@ async def get_model_metrics(
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/model-versions/comparison")
-async def get_version_comparison(db: Session = Depends(get_db)):
+async def get_version_comparison():
     """Get comparison data across all model versions"""
     try:
         versions = db.query(training_models.ModelVersion).all()
@@ -101,7 +102,7 @@ async def get_version_comparison(db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/training-history")
-async def get_training_history(db: Session = Depends(get_db)):
+async def get_training_history():
     """Get model training history"""
     try:
         events = db.query(training_models.TrainingEvent).order_by(
@@ -131,9 +132,7 @@ async def get_training_history(db: Session = Depends(get_db)):
 
 @router.post("/compare-distributions")
 async def compare_distributions(
-    request: training_schemas.DistributionComparisonRequest,
-    db: Session = Depends(get_db)
-):
+    request: training_schemas.DistributionComparisonRequest):
     """Compare distributions between new data and reference"""
     try:
         comparison_service = training_service.DistributionComparisonService()
@@ -171,9 +170,7 @@ async def compare_distributions(
 
 @router.post("/retrain-model")
 async def retrain_model(
-    request: training_schemas.RetrainModelRequest,
-    db: Session = Depends(get_db)
-):
+    request: training_schemas.RetrainModelRequest):
     """Trigger model retraining with specific data"""
     try:
         # Create new model version
@@ -234,9 +231,7 @@ async def retrain_model(
 @router.put("/model-metrics/{version}")
 async def update_model_metrics(
     version: str,
-    request: training_schemas.UpdateMetricsRequest,
-    db: Session = Depends(get_db)
-):
+    request: training_schemas.UpdateMetricsRequest):
     """Update metrics for a model version"""
     try:
         version_number = int(version[1:])
@@ -267,9 +262,7 @@ async def update_model_metrics(
 
 @router.post("/model-versions")
 async def create_model_version(
-    request: training_schemas.CreateVersionRequest,
-    db: Session = Depends(get_db)
-):
+    request: training_schemas.CreateVersionRequest):
     """Create a new model version entry"""
     try:
         new_version = training_models.ModelVersion(
@@ -294,9 +287,7 @@ async def create_model_version(
 
 @router.get("/vamos-analysis/{reference_id}")
 async def get_vamos_analysis(
-    reference_id: str,
-    db: Session = Depends(get_db)
-):
+    reference_id: str):
     """Get VAMOS analysis results for reference data"""
     try:
         analysis = db.query(training_models.VamosAnalysis).filter(
@@ -319,9 +310,7 @@ async def get_vamos_analysis(
 
 @router.post("/training-events")
 async def log_training_event(
-    request: training_schemas.TrainingEventRequest,
-    db: Session = Depends(get_db)
-):
+    request: training_schemas.TrainingEventRequest):
     """Log a training event"""
     try:
         event = training_models.TrainingEvent(

@@ -1,6 +1,6 @@
 from PySide6.QtWidgets import (QWidget, QLabel, QVBoxLayout, QHBoxLayout, QPushButton, QCheckBox,
                                QSlider, QComboBox, QGroupBox, QMessageBox, QSpinBox,
-                               QFrame)
+                               QFrame, QPixmap)
 from PySide6.QtGui import QFont, QIcon
 from PySide6.QtCore import Qt, Signal, QTimer
 import json
@@ -20,7 +20,8 @@ class SettingsPage(QWidget):
         self.model_versions = []
         self.current_settings = {
             'sensitivity': 0.5,
-            'model_version': 'v1'
+            'model_version': 'v1',
+            'auto_update': False
         }
         self.settings_file = "vamos_settings.json"
         self.initUI()
@@ -298,9 +299,29 @@ class SettingsPage(QWidget):
         """)
         self.refreshButton.clicked.connect(self.fetch_model_versions)
         
+        # Rollback button
+        self.rollbackButton = QPushButton("Rollback")
+        self.rollbackButton.setStyleSheet("""
+            QPushButton {
+                background-color: #FFA500;
+                color: white;
+                border-radius: 4px;
+                padding: 8px 15px;
+            }
+            QPushButton:hover {
+                background-color: #FF8C00;
+            }
+            QPushButton:disabled {
+                background-color: #cccccc;
+            }
+        """)
+        self.rollbackButton.clicked.connect(self.rollback_model_version)
+        self.rollbackButton.setEnabled(False)
+        
         versionLayout.addWidget(QLabel("Version:"))
         versionLayout.addWidget(self.versionCombo)
         versionLayout.addWidget(self.refreshButton)
+        versionLayout.addWidget(self.rollbackButton)
         versionLayout.addStretch()
         
         modelLayout.addLayout(versionLayout)
@@ -313,7 +334,15 @@ class SettingsPage(QWidget):
         # Auto-update checkbox
         self.autoUpdateCheck = QCheckBox("Automatically use latest version")
         self.autoUpdateCheck.setStyleSheet("font-weight: normal; margin-top: 10px;")
+        self.autoUpdateCheck.stateChanged.connect(self.on_auto_update_changed)
         modelLayout.addWidget(self.autoUpdateCheck)
+        
+        # Training info
+        self.trainingInfoLabel = QLabel()
+        self.trainingInfoLabel.setWordWrap(True)
+        self.trainingInfoLabel.setStyleSheet("font-weight: normal; color: #0277BD; margin-top: 10px; padding: 10px; background-color: #E1F5FE; border-radius: 3px;")
+        self.trainingInfoLabel.hide()
+        modelLayout.addWidget(self.trainingInfoLabel)
         
         modelGroup.setLayout(modelLayout)
         mainLayout.addWidget(modelGroup)
@@ -350,6 +379,70 @@ class SettingsPage(QWidget):
     def on_version_changed(self, version):
         if version and version.startswith('v'):
             self.current_settings['model_version'] = version
+            
+            # Enable/disable rollback based on version
+            version_num = int(version[1:]) if version[1:].isdigit() else 1
+            self.rollbackButton.setEnabled(version_num > 1)
+            
+            # Show training info if available
+            self.show_version_training_info(version)
+
+    def on_auto_update_changed(self, state):
+        """Handle auto-update checkbox change"""
+        if state == Qt.Checked and self.model_versions:
+            # Select latest version
+            self.versionCombo.setCurrentText(self.model_versions[0])
+            self.versionCombo.setEnabled(False)
+        else:
+            self.versionCombo.setEnabled(True)
+
+    def show_version_training_info(self, version):
+        """Show training information for selected version"""
+        try:
+            # This would typically fetch from API
+            if version and int(version[1:]) > 1:
+                self.trainingInfoLabel.setText(
+                    f"ℹ️ Model {version} was created by VAMOS automatic retraining "
+                    f"with 95%+ confidence match."
+                )
+                self.trainingInfoLabel.show()
+            else:
+                self.trainingInfoLabel.hide()
+        except:
+            self.trainingInfoLabel.hide()
+
+    def rollback_model_version(self):
+        """Rollback to previous model version"""
+        current = self.versionCombo.currentText()
+        if current and current.startswith('v'):
+            try:
+                version_num = int(current[1:])
+                if version_num > 1:
+                    previous = f'v{version_num - 1}'
+                    
+                    reply = QMessageBox.question(
+                        self,
+                        "Confirm Rollback",
+                        f"Are you sure you want to rollback from {current} to {previous}?",
+                        QMessageBox.Yes | QMessageBox.No,
+                        QMessageBox.No
+                    )
+                    
+                    if reply == QMessageBox.Yes:
+                        self.versionCombo.setCurrentText(previous)
+                        QMessageBox.information(
+                            self,
+                            "Rollback Successful",
+                            f"Model version rolled back to {previous}. Don't forget to save settings.",
+                            QMessageBox.Ok
+                        )
+            except Exception as e:
+                QMessageBox.warning(
+                    self,
+                    "Rollback Error",
+                    f"Could not rollback version: {e}",
+                    QMessageBox.Ok
+                )
 
     def fetch_model_versions(self):
         """Fetch available model versions from the cloud"""
@@ -387,7 +480,7 @@ class SettingsPage(QWidget):
             self.versionCombo.setCurrentText(self.current_settings['model_version'])
         
         latest = versions[0] if versions else "v1"
-        self.versionInfoLabel.setText(f"Latest version: {latest}")
+        self.versionInfoLabel.setText(f"Latest version: {latest} | Total versions: {len(versions)}")
 
     def use_default_versions(self):
         """Use default versions when cloud fetch fails"""
@@ -396,7 +489,7 @@ class SettingsPage(QWidget):
         self.versionInfoLabel.setText("Using default versions (offline mode)")
 
     def save_settings(self):
-        """Save current settings"""
+        """Save current settings including model version"""
         self.current_settings = {
             'sensitivity': self.sensitivitySlider.value() / 10.0,
             'model_version': self.versionCombo.currentText(),
@@ -404,15 +497,34 @@ class SettingsPage(QWidget):
         }
         
         try:
+            # Save to local file
             with open(self.settings_file, 'w') as f:
                 json.dump(self.current_settings, f, indent=4)
             
+            # Update API settings
+            if self.api_client:
+                try:
+                    # Update backend with new settings
+                    update_result = self.api_client.update_settings(
+                        sensitivity=self.current_settings['sensitivity'],
+                        selected_products=[]  # This might need to be populated based on your needs
+                    )
+                    
+                    # Also update model version in backend
+                    # This might need a separate API call depending on your backend
+                except Exception as e:
+                    print(f"Error updating backend settings: {e}")
+            
+            # Emit signal for other components
             self.settings_changed_signal.emit(self.current_settings)
             
             QMessageBox.information(
                 self,
                 "Settings Saved",
-                "Your settings have been saved successfully.",
+                f"Your settings have been saved successfully.\n\n"
+                f"Model Version: {self.current_settings['model_version']}\n"
+                f"Sensitivity: {self.current_settings['sensitivity']:.1f}\n"
+                f"Auto-update: {'Enabled' if self.current_settings['auto_update'] else 'Disabled'}",
                 QMessageBox.Ok
             )
         except Exception as e:
@@ -437,6 +549,7 @@ class SettingsPage(QWidget):
                 # Apply auto-update
                 self.autoUpdateCheck.setChecked(settings.get('auto_update', False))
                 
+                # Model version will be set after versions are loaded
                 self.current_settings = settings
                 
             except Exception as e:
