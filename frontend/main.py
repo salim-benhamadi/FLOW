@@ -1,3 +1,5 @@
+# Updated AppMainWindow class with Settings page integration
+
 from PySide6.QtWidgets import (QMainWindow, QStackedWidget, QApplication, QWidget)
 from PySide6.QtCore import QTimer
 from ui.views.loading_view import LoadingPage
@@ -8,6 +10,7 @@ from ui.views.select_view import SelectionPage
 from ui.views.results_view import ResultPage
 from ui.views.login_view import LoginPage
 from ui.views.admin_view import AdminDashboard
+from ui.views.settings_view import SettingsPage
 
 class AppMainWindow(QMainWindow):
     def __init__(self):
@@ -17,6 +20,12 @@ class AppMainWindow(QMainWindow):
         self.setMinimumHeight(800)
         self.setContentsMargins(10, 10, 10, 0)
         self.setStyleSheet("background-color: white; color: black")
+        
+        # Initialize settings storage
+        self.current_settings = {
+            'sensitivity': 0.5,
+            'model_version': 'v1'
+        }
         
         # Initialize stacked widget
         self.stack = QStackedWidget()
@@ -31,6 +40,7 @@ class AppMainWindow(QMainWindow):
         self.ResultPage = ResultPage()
         self.LoginPage = LoginPage()
         self.AdminDashboard = AdminDashboard()
+        self.SettingsPage = SettingsPage()
 
         # Add pages to stack
         self.stack.addWidget(self.LoadingPage)
@@ -41,6 +51,8 @@ class AppMainWindow(QMainWindow):
         self.stack.addWidget(self.ResultPage)
         self.stack.addWidget(self.LoginPage)
         self.stack.addWidget(self.AdminDashboard)
+        self.stack.addWidget(self.SettingsPage)
+        
         self.UploadPage.hide()
         
         QTimer.singleShot(3000, self.showSecondPage)
@@ -50,6 +62,7 @@ class AppMainWindow(QMainWindow):
     def connectSignals(self):
         # Updated connections
         self.UploadPage.show_selection_signal.connect(self.show_reference_selection) 
+        self.UploadPage.show_settings_signal.connect(self.show_settings)  # Connect settings signal
         self.ReferenceSelectionPage.show_upload_signal.connect(self.show_upload)
         self.ReferenceSelectionPage.show_selection_signal.connect(self.show_selection)
         self.SelectionPage.show_upload_signal.connect(self.show_upload)
@@ -57,6 +70,10 @@ class AppMainWindow(QMainWindow):
         self.ProcessingPage.show_results_signal.connect(self.show_results)
         self.ProcessingPage.show_upload_signal.connect(self.show_upload)
         self.ResultPage.show_upload_signal.connect(self.show_upload)
+        
+        # Settings page connections
+        self.SettingsPage.show_upload_signal.connect(self.show_upload)
+        self.SettingsPage.settings_changed_signal.connect(self.update_settings)
         
         # Admin functionality connections
         self.UploadPage.show_admin_login_signal.connect(self.show_login)
@@ -73,6 +90,15 @@ class AppMainWindow(QMainWindow):
     def showSecondPage(self):
         """Show upload page after loading screen"""
         self.stack.setCurrentWidget(self.UploadPage)
+    
+    def show_settings(self):
+        """Show settings page"""
+        self.stack.setCurrentWidget(self.SettingsPage)
+    
+    def update_settings(self, settings: dict):
+        """Update application settings"""
+        self.current_settings = settings
+        # Settings will be passed to DataProcessor and Model when processing
     
     def show_reference_selection(self, file_paths: list):
         """Show reference selection page with uploaded files"""
@@ -93,8 +119,10 @@ class AppMainWindow(QMainWindow):
         self.stack.setCurrentWidget(self.UploadPage)
     
     def show_processing(self, selected_items: list, files: list):
-        """Show processing page"""
+        """Show processing page with current settings"""
+        # Pass settings to processing page
         self.ProcessingPage.set_data(selected_items, files)
+        self.ProcessingPage.set_settings(self.current_settings)  # Pass settings
         self.stack.setCurrentWidget(self.ProcessingPage)
     
     def show_results(self, data):

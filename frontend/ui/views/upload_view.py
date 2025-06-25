@@ -109,6 +109,7 @@ class LotInputWithInsertion(QWidget):
 class UploadPage(QWidget):
     show_selection_signal = Signal(list) 
     show_admin_login_signal = Signal()
+    show_settings_signal = Signal()
 
     def __init__(self):
         super().__init__()
@@ -179,6 +180,29 @@ class UploadPage(QWidget):
         titleLayout.addWidget(title)
         titleLayout.addWidget(subtitle)
         
+        # Settings button
+        self.settingsButton = QPushButton("Settings")
+        try:
+            settings_icon = resource_path(os.path.join('./resources/icons', 'settings.png'))
+            if os.path.exists(settings_icon):
+                self.settingsButton.setIcon(QIcon(settings_icon))
+        except:
+            pass
+        
+        self.settingsButton.setStyleSheet("""
+            QPushButton {
+                background-color: #6C757D;
+                color: white;
+                border-radius: 5px;
+                padding: 5px 15px;
+                margin-right: 5px;
+            }
+            QPushButton:hover {
+                background-color: #5A6268;
+            }
+        """)
+        self.settingsButton.clicked.connect(self.show_settings)
+        
         self.proceedButton = QPushButton("Proceed")
         self.proceedButton.setStyleSheet("""
             QPushButton {
@@ -204,20 +228,24 @@ class UploadPage(QWidget):
                 margin-left: 5px;
             }
             QPushButton:hover {
-                background-color: #5a6268;
+                background-color: #CC0000;
             }
         """)
         self.adminButton.clicked.connect(self.show_admin_login)
         
-        
         row1.addLayout(titleLayout)
         row1.addStretch()
+        row1.addWidget(self.settingsButton, alignment=Qt.AlignRight)
         row1.addWidget(self.proceedButton, alignment=Qt.AlignRight)
         row1.addWidget(self.adminButton, alignment=Qt.AlignRight)
         row1.setContentsMargins(0,0,0,20)
         headerLayout.addLayout(row1)
         
         mainLayout.addWidget(headerWidget)
+    
+    def show_settings(self):
+        """Emit signal to show settings page"""
+        self.show_settings_signal.emit()
 
     def setupDragDropSection(self, mainLayout):
         self.dragDropSection = QWidget()

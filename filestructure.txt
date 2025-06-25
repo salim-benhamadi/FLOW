@@ -43846,6 +43846,7 @@
             |-- reference_selection_view.py
             |-- results_view.py
             |-- select_view.py
+            |-- settings_view.py
             |-- training_view.py
             |-- upload_view.py
             |-- __pycache__

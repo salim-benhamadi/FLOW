@@ -9,6 +9,8 @@ import logging
 from typing import Dict, List, Optional, Tuple, Union
 from pathlib import Path
 from ui.utils.PathResources import resource_path
+from scipy import stats
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -35,14 +37,13 @@ class DataProcessor(QThread):
     }
 
     def __init__(self, selected_items: Optional[List[str]] = None, files: List[str] = None, 
-                 sensitivity: float = 0.5):
+                 sensitivity: float = 0.5, model_version: str = None):
         super().__init__()
         if not files:
             raise ValueError("Files cannot be empty")
         
         self.files = [str(Path(f).resolve()) for f in files]
         
-        # Handle selected_items - if None or empty, use all available tests
         if selected_items:
             self.selected_items = [item.split(";")[1] for item in selected_items]
             self.selected_numbers = [item.split(";")[0] for item in selected_items]
@@ -52,9 +53,38 @@ class DataProcessor(QThread):
             self.selected_numbers = None
             self.selected_names = None
             
-        self.sensitivity = sensitivity
+        self.sensitivity = np.clip(sensitivity, 0.0, 1.0)
+        self.model_version = model_version
         self.results = []
         self._processed_count = 0
+
+    def set_sensitivity(self, sensitivity: float):
+        self.sensitivity = np.clip(sensitivity, 0.0, 1.0)
+    
+    def _adjust_thresholds_by_sensitivity(self) -> dict:
+        base_thresholds = {
+            'cpk_threshold': 1.33,
+            'yield_threshold': 0.95,
+            'variance_threshold': 0.1,
+            'outlier_threshold': 3.0
+        }
+        
+        if self.sensitivity < 0.3:
+            multiplier = 0.7
+        elif self.sensitivity < 0.7:
+            multiplier = 1.0
+        else:
+            multiplier = 1.3
+        
+        adjusted = {}
+        for key, value in base_thresholds.items():
+            if 'threshold' in key:
+                if key in ['yield_threshold']:
+                    adjusted[key] = value + (1 - value) * (1 - self.sensitivity) * 0.5
+                else:
+                    adjusted[key] = value * (2 - multiplier)
+        
+        return adjusted
 
     def _get_representative_sample(self, data: pd.DataFrame, n_samples: int = 201) -> np.ndarray:
         if data.empty or data.dropna().empty:
@@ -74,7 +104,7 @@ class DataProcessor(QThread):
                 col_data = valid_data[col].values
                 if len(col_data) == 0:
                     continue
-                    
+                
                 num_strata = min(20, len(col_data))
                 strata_bounds = np.percentile(col_data, np.linspace(0, 100, num_strata))
                 samples_per_stratum = max(1, n_samples // num_strata)
@@ -115,7 +145,10 @@ class DataProcessor(QThread):
                                       replace=False)
             return np.array([])
 
-    def calculate_cpk(self, data: np.ndarray, lsl: float, usl: float) -> float:
+    def calculate_cpk(self, data: np.ndarray, lsl: float, usl: float, sensitivity: float = None) -> float:
+        if sensitivity is None:
+            sensitivity = self.sensitivity
+        
         if pd.isna(lsl) and pd.isna(usl):
             return np.nan
             
@@ -129,11 +162,25 @@ class DataProcessor(QThread):
         cpl = np.nan if pd.isna(lsl) else (mean - lsl) / (3 * std)
         
         if pd.isna(cpu):
-            return round(cpl, 2)
+            cpk = cpl
         elif pd.isna(cpl):
-            return round(cpu, 2)
+            cpk = cpu
         else:
-            return round(min(cpu, cpl), 2)
+            cpk = min(cpu, cpl)
+        
+        sensitivity_factor = 1.0 - (sensitivity - 0.5) * 0.2
+        adjusted_cpk = cpk * sensitivity_factor
+        
+        return round(adjusted_cpk, 2)
+
+    def detect_outliers(self, data: np.ndarray, sensitivity: float = None) -> np.ndarray:
+        if sensitivity is None:
+            sensitivity = self.sensitivity
+        
+        z_threshold = 3.0 - (sensitivity * 1.5)
+        
+        z_scores = np.abs(stats.zscore(data))
+        return z_scores > z_threshold
 
     def calculate_yield_metrics(self, data: np.ndarray, lsl: float, usl: float) -> Tuple[float, float, float]:
         total_count = len(data)
@@ -180,118 +227,76 @@ class DataProcessor(QThread):
 
     def process_single_file(self, input_file: str) -> Optional[pd.DataFrame]:
         try:
-            # Input data extraction
             df_input, _ = EFF.read(input_file)
 
             df_info_1 = EFF.get_value_rows(df_input, header='<+ParameterName>')
             lot_input = df_info_1['Lot'].iloc[0] if not df_info_1.empty else "Unknown"
             insertion_input = df_info_1['MeasStep'].iloc[0] if not df_info_1.empty else "Unknown"
 
-            # Reference data extraction
             reference_path = resource_path(f'resources/output/ZA407235G04_{insertion_input}.eff')
             if not Path(reference_path).exists():
-                reference_path = resource_path(f'resources/output/ZA407235G04_B1.eff')
-            df_ref, _ = EFF.read(reference_path)
-            df_info_2 = EFF.get_value_rows(df_ref, header='<+ParameterName>')
+                logger.warning(f"Reference file not found: {reference_path}")
+                return None
+
+            df_reference, _ = EFF.read(reference_path)
+            
+            df_info_2 = EFF.get_value_rows(df_reference, header='<+ParameterName>')
             lot_reference = df_info_2['Lot'].iloc[0] if not df_info_2.empty else "Unknown"
             insertion_reference = df_info_2['MeasStep'].iloc[0] if not df_info_2.empty else "Unknown"
 
-            # Determine which tests to analyze
-            current_selected_items = self.selected_items
-            if current_selected_items is None:
-                # Use all available tests
-                desc_rows = EFF.get_description_rows(df_input, header="<+ParameterName>")
-                mask = desc_rows.loc['<+ParameterNumber>'].apply(lambda x: str(x).isdigit())
-                current_selected_items = desc_rows.columns[mask].tolist()
-                logger.info(f"Using all {len(current_selected_items)} available tests")
-
-            TNUMBERS = EFF.get_description_rows(df_input, header="<+ParameterName>")[current_selected_items].loc['<+ParameterNumber>']
-            TNUMBERS = TNUMBERS.astype(str)
+            df_new = analyze_distribution_similarity(
+                df_input, 
+                df_reference, 
+                self.selected_names, 
+                sensitivity=self.sensitivity,
+                model_version=self.model_version
+            )
             
-            df_testdata_1_full = EFF.get_value_rows(df_input, header='<+ParameterNumber>', fix_dtypes=True)
-            df_testdata_2_full = EFF.get_value_rows(df_ref, header='<+ParameterNumber>', fix_dtypes=True)
+            desc_rows = EFF.get_description_rows(df_input, header="<+ParameterName>")
             
-            df_testdata_1_full.columns = df_testdata_1_full.columns.astype(str)
-            df_testdata_2_full.columns = df_testdata_2_full.columns.astype(str)
+            if self.selected_names is None:
+                available_tests = desc_rows.columns.tolist()
+            else:
+                available_tests = self.selected_names
 
-            # Create dictionaries keyed by test name instead of test number
-            input_data_dict = {}
-            reference_data_dict = {}
-            sampled_data_1 = pd.DataFrame()
-            sampled_data_2 = pd.DataFrame()
-
-            for idx, t_number in enumerate(TNUMBERS):
-                test_name = current_selected_items[idx]
-                
-                if t_number not in df_testdata_1_full.columns or t_number not in df_testdata_2_full.columns:
-                    input_data_dict[test_name] = []
-                    reference_data_dict[test_name] = []
-                    logger.warning(f"Test number {t_number} not found in data columns for test {test_name}")
-                    continue
-
-                input_series = df_testdata_1_full[t_number].dropna()
-                reference_series = df_testdata_2_full[t_number].dropna()
-                
-                if len(input_series) == 0 or len(reference_series) == 0:
-                    input_data_dict[test_name] = []
-                    reference_data_dict[test_name] = []
-                    logger.warning(f"No valid data for test {test_name} (number: {t_number})")
-                    continue
-                    
-                input_df = pd.DataFrame({t_number: input_series})
-                reference_df = pd.DataFrame({t_number: reference_series})
-                
-                input_indices = self._get_representative_sample(input_df)
-                reference_indices = self._get_representative_sample(reference_df)
-                
-                if len(input_indices) > 0 and len(reference_indices) > 0:
-                    sampled_input = input_series.iloc[input_indices]
-                    sampled_reference = reference_series.iloc[reference_indices]
-                    sampled_data_1[t_number] = sampled_input.reset_index(drop=True)
-                    sampled_data_2[t_number] = sampled_reference.reset_index(drop=True)
-                    
-                    # Store data with test name as key
-                    input_data_dict[test_name] = sampled_input.tolist()
-                    reference_data_dict[test_name] = sampled_reference.tolist()
-                    
-                    logger.info(f"Stored data for test {test_name}: input={len(sampled_input)}, reference={len(sampled_reference)}")
-                else:
-                    input_data_dict[test_name] = []
-                    reference_data_dict[test_name] = []
-                    logger.warning(f"No sampled indices for test {test_name}")
-
-            columns = list(sampled_data_1.columns)
-            total_columns = len(columns)
-
-            if total_columns == 0:
-                logger.error("No valid test data found in file")
-                return None
-
-            # Use ML model for distribution analysis instead of statistical method
-            logger.info(f"Analyzing {total_columns} tests using ML model with sensitivity {self.sensitivity}")
+            current_selected_items = []
+            current_selected_numbers = []
             
-            try:
-                # Call the ML-based analyze_distribution_similarity function
-                df_new = analyze_distribution_similarity(df_input, df_ref, current_selected_items, self.sensitivity)
-                logger.info("ML analysis completed successfully")
-            except Exception as e:
-                logger.error(f"ML analysis failed: {str(e)}")
-                raise
-            
-            # Get LSL/USL values
-            lsl_input = EFF.lsl(df_input, columns)
-            usl_input = EFF.usl(df_input, columns)
-            lsl_reference = EFF.lsl(df_ref, columns)
-            usl_reference = EFF.usl(df_ref, columns)
+            for test in available_tests:
+                if test in desc_rows.columns:
+                    current_selected_items.append(test)
+                    test_number = desc_rows[test].loc['<+ParameterNumber>']
+                    current_selected_numbers.append(str(test_number))
 
-            # Calculate percentiles for compatibility
+            columns = desc_rows[current_selected_items].loc['<+ParameterNumber>'].astype(str)
+            
+            df_lsl1 = EFF.get_description_rows(df_input, header="<+ParameterName>").loc['<-LoLimit>']
+            df_usl1 = EFF.get_description_rows(df_input, header="<+ParameterName>").loc['<+HiLimit>']
+            df_lsl2 = EFF.get_description_rows(df_reference, header="<+ParameterName>").loc['<-LoLimit>']
+            df_usl2 = EFF.get_description_rows(df_reference, header="<+ParameterName>").loc['<+HiLimit>']
+            
+            lsl_input = df_lsl1[current_selected_items].values.astype(float)
+            usl_input = df_usl1[current_selected_items].values.astype(float)
+            lsl_reference = df_lsl2[current_selected_items].values.astype(float)
+            usl_reference = df_usl2[current_selected_items].values.astype(float)
+
+            TNUMBERS = list(columns)
+            
+            df_1 = df_input.loc[1:, columns]
+            df_2 = df_reference.loc[1:, columns]
+            
+            sample_indices_1 = self._get_representative_sample(df_1)
+            sample_indices_2 = self._get_representative_sample(df_2)
+            
+            sampled_data_1 = df_1.iloc[sample_indices_1]
+            sampled_data_2 = df_2.iloc[sample_indices_2]
+            
             percentiles_input = []
             percentiles_reference = []
             for i, column in enumerate(columns):
                 percentiles_input.append(self.calculate_percentiles(sampled_data_1[column]))
                 percentiles_reference.append(self.calculate_percentiles(sampled_data_2[column]))
             
-            # Create result DataFrame
             result_df = pd.DataFrame()
             result_df["Test Name"] = current_selected_items
             result_df["Test Number"] = [int(float(t.strip())) for t in TNUMBERS]
@@ -304,34 +309,43 @@ class DataProcessor(QThread):
             result_df["Product"] = "AJAX"
             result_df["input_file"] = input_file
             
-            # Filter ML results to match our test numbers
             df_filtered = df_new.reindex(TNUMBERS)
 
-            # Get ML predictions and confidence scores
             result_df["Status"] = df_filtered["target"].values
             result_df["ML_Confidence"] = df_filtered["confidence_score"].values.round(4)
             result_df["Sensitivity_Level"] = df_filtered["sensitivity_level"].values
+            result_df["Model_Version"] = df_filtered.get("model_version", self.model_version).values
             
-            # Calculate basic statistics from sampled data
             df1_description = sampled_data_1.describe().round(8).T
             result_df["Min"] = df1_description["min"].values.round(8)
             result_df["Max"] = df1_description["max"].values.round(8)
             result_df["Mean"] = df1_description["mean"].values.round(8)
             result_df["Std"] = df1_description["std"].values.round(8)
 
-            # Add percentiles
             for metric in ['p1', 'p5', 'p25', 'p75', 'p95', 'p99']:
                 result_df[f'{metric}_input'] = [p[metric] for p in percentiles_input]
                 result_df[f'{metric}_reference'] = [p[metric] for p in percentiles_reference]
 
-            # Add specification limits
             result_df["LSL_input"] = lsl_input.round(8)
             result_df["USL_input"] = usl_input.round(8)
             result_df["LSL_reference"] = lsl_reference.round(8)
             result_df["USL_reference"] = usl_reference.round(8)
             result_df["Confidence"] = [0.95] * len(current_selected_items)
 
-            # Calculate Cpk and yield metrics
+            input_data_dict = {}
+            reference_data_dict = {}
+            
+            for i, (test_name, t_number) in enumerate(zip(current_selected_items, TNUMBERS)):
+                if t_number in sampled_data_1.columns:
+                    input_data_dict[test_name] = sampled_data_1[t_number].dropna().values.tolist()
+                else:
+                    input_data_dict[test_name] = []
+                    
+                if t_number in sampled_data_2.columns:
+                    reference_data_dict[test_name] = sampled_data_2[t_number].dropna().values.tolist()
+                else:
+                    reference_data_dict[test_name] = []
+
             cpk_values = []
             yield_values = []
             yield_loss_values = []
@@ -348,7 +362,6 @@ class DataProcessor(QThread):
 
                     input_data = sampled_data_1[t_number].values
                     
-                    # Use reference limits for Cpk calculation
                     lsl_idx = list(columns).index(t_number) if t_number in columns else None
                     usl_idx = list(columns).index(t_number) if t_number in columns else None
                     
@@ -376,14 +389,11 @@ class DataProcessor(QThread):
             result_df["Rejection_Rate"] = rejection_rate_values
             result_df["Module"] = result_df["Test Number"].map(self.get_module)
             
-            # Map using Test Name (which is the key in our dictionaries)
             result_df["input_data"] = result_df["Test Name"].map(input_data_dict)
             result_df["reference_data"] = result_df["Test Name"].map(reference_data_dict)
             
-            # Add measurements column for compatibility
             result_df["measurements"] = result_df["input_data"]
             
-            # Debug logging
             logger.info(f"Data mapping results:")
             for idx, row in result_df.iterrows():
                 test_name = row["Test Name"]
@@ -391,7 +401,6 @@ class DataProcessor(QThread):
                 has_reference = test_name in reference_data_dict and len(reference_data_dict[test_name]) > 0
                 logger.info(f"  {test_name}: input_data={has_input}, reference_data={has_reference}")
 
-            # Log ML prediction summary
             status_counts = result_df["Status"].value_counts()
             confidence_stats = result_df["ML_Confidence"].describe()
             logger.info(f"ML Prediction Summary:")
@@ -411,7 +420,7 @@ class DataProcessor(QThread):
             total_files = len(self.files)
             successful_results = []
 
-            logger.info(f"Starting processing of {total_files} files with ML model (sensitivity: {self.sensitivity})")
+            logger.info(f"Starting processing of {total_files} files with ML model (sensitivity: {self.sensitivity}, model: {self.model_version})")
 
             for index, input_file in enumerate(self.files, 1):
                 try:
@@ -437,11 +446,9 @@ class DataProcessor(QThread):
                     output_path = Path('test_results_analysis_ml.xlsx')
                     combined_df.to_excel(output_path, index=False)
                     
-                    # Log summary of results
                     logger.info(f"Processing complete. Total rows: {len(combined_df)}")
                     logger.info(f"Files processed successfully: {len(successful_results)}/{total_files}")
                     
-                    # ML-specific summary
                     overall_status_counts = combined_df["Status"].value_counts()
                     overall_confidence_stats = combined_df["ML_Confidence"].describe()
                     logger.info(f"Overall ML Results:")

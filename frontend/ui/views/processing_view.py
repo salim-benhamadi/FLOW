@@ -1,4 +1,3 @@
-# File : processing.py
 from PySide6.QtWidgets import (QWidget, QLabel, QVBoxLayout, QHBoxLayout, QPushButton, QFrame)
 from PySide6.QtGui import QFont
 from PySide6.QtCore import Qt, Signal
@@ -15,6 +14,10 @@ class ProcessingPage(QWidget):
         self.selected_items = []
         self.files = []
         self.processed_data = None
+        self.analysis_settings = {
+            'sensitivity': 0.5,
+            'model_version': 'v1'
+        }
         self.initUI()
 
     def initUI(self):
@@ -31,75 +34,84 @@ class ProcessingPage(QWidget):
                 color: white;
             }
             QPushButton#cancelButton {
-                background-color: #EF4444;  /* red-500 */
+                background-color: #EF4444;
             }
             QPushButton#cancelButton:hover {
-                background-color: #DC2626;  /* red-600 */
+                background-color: #DC2626;
             }
             QFrame#phasesFrame {
-                background-color: #F9FAFB;  /* gray-50 */
+                background-color: #F9FAFB;
                 border-radius: 8px;
                 padding: 10px;
             }
         """)
 
-        # Create main layout
         mainLayout = QVBoxLayout(self)
         mainLayout.setSpacing(20)
         mainLayout.setContentsMargins(20, 20, 20, 20)
 
-        # Header
         headerLayout = QHBoxLayout()
         
-        # Title and subtitle
-        titleLayout = QVBoxLayout()
-        self.title = QLabel("Processing")
-        self.title.setFont(QFont("Arial", 12, QFont.Bold))
-        self.subtitle = QLabel("Your files are being processed")
-        self.subtitle.setFont(QFont("Arial", 8))
-        self.subtitle.setStyleSheet("color: #6B7280;")  
+        backButton = QPushButton("← Back")
+        backButton.setFixedSize(80, 30)
+        backButton.setStyleSheet("""
+            QPushButton {
+                background-color: #6B7280;
+                color: white;
+                border-radius: 5px;
+                font-size: 12px;
+            }
+            QPushButton:hover {
+                background-color: #4B5563;
+            }
+        """)
+        backButton.clicked.connect(self.show_upload_signal.emit)
         
-        titleLayout.addWidget(self.title)
-        titleLayout.addWidget(self.subtitle)
+        headerTitle = QLabel("Processing Files")
+        headerTitle.setFont(QFont("Arial", 16, QFont.Bold))
+        headerTitle.setAlignment(Qt.AlignCenter)
         
-        # Cancel button
-        self.cancelButton = QPushButton("Cancel")
-        self.cancelButton.setObjectName("cancelButton")
-        self.cancelButton.clicked.connect(self.cancel_processing)
+        settingsLabel = QLabel("")
+        settingsLabel.setFont(QFont("Arial", 9))
+        settingsLabel.setStyleSheet("color: #6B7280;")
         
-        headerLayout.addLayout(titleLayout)
+        headerLayout.addWidget(backButton)
         headerLayout.addStretch()
-        headerLayout.addWidget(self.cancelButton)
+        headerLayout.addWidget(headerTitle)
+        headerLayout.addStretch()
+        headerLayout.addWidget(settingsLabel)
         
         mainLayout.addLayout(headerLayout)
 
-        # Donut Progress
-        self.donutProgress = DonutProgress(self)
+        progressLayout = QVBoxLayout()
+        progressLayout.setAlignment(Qt.AlignCenter)
         
-        # Center the donut progress
-        progressLayout = QHBoxLayout()
-        progressLayout.addStretch()
-        progressLayout.addWidget(self.donutProgress)
-        progressLayout.addStretch()
-        mainLayout.addLayout(progressLayout)
+        self.donutProgress = DonutProgress()
+        self.donutProgress.setFixedSize(200, 200)
+        progressLayout.addWidget(self.donutProgress, alignment=Qt.AlignCenter)
         
-        # Status label
         self.statusLabel = QLabel("Initializing...")
         self.statusLabel.setAlignment(Qt.AlignCenter)
-        self.statusLabel.setStyleSheet("color: #6B7280;")  # gray-500
-        mainLayout.addWidget(self.statusLabel)
+        self.statusLabel.setFont(QFont("Arial", 12))
+        self.statusLabel.setStyleSheet("color: #374151; margin-top: 10px;")
+        progressLayout.addWidget(self.statusLabel)
+        
+        mainLayout.addLayout(progressLayout)
 
-        # Processing phases frame
+        self.cancelButton = QPushButton("Cancel")
+        self.cancelButton.setObjectName("cancelButton")
+        self.cancelButton.setFixedSize(120, 40)
+        self.cancelButton.clicked.connect(self.cancel_processing)
+        mainLayout.addWidget(self.cancelButton, alignment=Qt.AlignCenter)
+
         phasesFrame = QFrame()
         phasesFrame.setObjectName("phasesFrame")
         phasesLayout = QVBoxLayout(phasesFrame)
         
-        # Phases title
         phasesTitle = QLabel("Processing Phases")
         phasesTitle.setFont(QFont("Arial", 10, QFont.Bold))
         phasesLayout.addWidget(phasesTitle)
         
-        # Phase indicators
         self.phases = [
             PhaseIndicator("Reading Data Files"),
             PhaseIndicator("Processing Test Data"),
@@ -113,15 +125,28 @@ class ProcessingPage(QWidget):
         mainLayout.addWidget(phasesFrame)
         mainLayout.addStretch()
         mainLayout.setContentsMargins(40,40,40,40)
-        # Initialize first phase
         self.phases[0].updateState(PhaseState.ACTIVE)
         
+        self.update_settings_display()
+        
+    def set_settings(self, settings: dict):
+        self.analysis_settings = settings
+        self.update_settings_display()
+    
+    def update_settings_display(self):
+        sensitivity_pct = int(self.analysis_settings.get('sensitivity', 0.5) * 100)
+        model_version = self.analysis_settings.get('model_version', 'v1')
+        settings_text = f"Sensitivity: {sensitivity_pct}% | Model: {model_version}"
+        
+        for child in self.findChildren(QLabel):
+            if child.styleSheet() and "color: #6B7280;" in child.styleSheet():
+                child.setText(settings_text)
+                break
+        
     def update_progress(self, value):
-        """Update the progress indicators"""
         self.donutProgress.setPercentage(value)
         self.statusLabel.setText(f"Processing... {value}%")
         
-        # Update phases based on progress
         if value >= 25:
             self.phases[0].updateState(PhaseState.COMPLETED)
             self.phases[1].updateState(PhaseState.ACTIVE)
@@ -137,15 +162,14 @@ class ProcessingPage(QWidget):
             self.cancelButton.setText("Done")
             self.cancelButton.setStyleSheet("""
                 QPushButton {
-                    background-color: #22C55E;  /* green-500 */
+                    background-color: #22C55E;
                 }
                 QPushButton:hover {
-                    background-color: #16A34A;  /* green-600 */
+                    background-color: #16A34A;
                 }
             """)
 
     def set_data(self, selected_items: list, files: list):
-        """Set the data to be processed"""
         self.selected_items = selected_items
         self.files = files
         self.donutProgress.setPercentage(0)
@@ -153,21 +177,33 @@ class ProcessingPage(QWidget):
         self.start_processing()
 
     def start_processing(self):
-        """Start the processing operation"""
         if hasattr(self, 'processor') and self.processor is not None:
             self.processor.terminate()
         
-        self.processor = DataProcessor(self.selected_items, self.files)
+        self.processor = DataProcessor(
+            self.selected_items, 
+            self.files,
+            sensitivity=self.analysis_settings.get('sensitivity', 0.5),
+            model_version=self.analysis_settings.get('model_version', 'v1')
+        )
         self.processor.progress.connect(self.update_progress)
         self.processor.finished.connect(self.processing_finished)
         self.processor.result.connect(self.handle_result)
+        self.processor.error.connect(self.handle_error)
         
         self.cancelButton.setText("Cancel")
+        self.cancelButton.setStyleSheet("""
+            QPushButton#cancelButton {
+                background-color: #EF4444;
+            }
+            QPushButton#cancelButton:hover {
+                background-color: #DC2626;
+            }
+        """)
         self.statusLabel.setText("Processing started...")
         self.processor.start()
 
     def cancel_processing(self):
-        """Handle cancel button click"""
         if hasattr(self, 'processor') and self.processor and self.processor.isRunning():
             self.processor.terminate()
             self.processor = None
@@ -177,13 +213,31 @@ class ProcessingPage(QWidget):
             self.show_upload_signal.emit()
 
     def handle_result(self, result_data):
-        """Handle the processed data"""
         self.processed_data = result_data
 
+    def handle_error(self, error_message):
+        self.statusLabel.setText(f"Error: {error_message}")
+        self.cancelButton.setText("Back")
+        self.cancelButton.setStyleSheet("""
+            QPushButton {
+                background-color: #6B7280;
+            }
+            QPushButton:hover {
+                background-color: #4B5563;
+            }
+        """)
+
     def processing_finished(self):
-        """Handle completion of processing"""
         self.statusLabel.setText("Processing completed!")
         self.cancelButton.setText("Done")
+        self.cancelButton.setStyleSheet("""
+            QPushButton {
+                background-color: #22C55E;
+            }
+            QPushButton:hover {
+                background-color: #16A34A;
+            }
+        """)
         if self.processed_data is not None:
             self.show_results_signal.emit(self.processed_data)
         else:
