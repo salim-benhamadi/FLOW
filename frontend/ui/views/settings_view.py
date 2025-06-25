@@ -16,7 +16,7 @@ class SettingsPage(QWidget):
     
     def __init__(self, api_client=SettingsClient):
         super().__init__()
-        self.api_client = api_client
+        self.api_client = SettingsClient()
         self.model_versions = []
         self.current_settings = {
             'sensitivity': 0.5,

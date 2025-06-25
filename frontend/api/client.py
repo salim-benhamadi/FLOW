@@ -482,7 +482,7 @@ class APIClient:
         try:
             return await self._make_request(
                 "GET",
-                "/api/v1/training/history",
+                "/api/v1/training/training-history",
                 params={'limit': limit}
             )
         except Exception as e:

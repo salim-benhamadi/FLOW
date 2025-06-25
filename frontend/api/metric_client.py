@@ -61,6 +61,26 @@ class MetricClient:
             logger.error(f"Error getting model metrics: {e}")
             return []
 
+    async def get_version_comparison_data(self) -> List[Dict]:
+        """Get comparison data across all model versions"""
+        try:
+            response = await self._make_request('GET', '/api/v1/training/model-versions/comparison')
+            return response.get('comparison_data', [])
+        except Exception as e:
+            logger.error(f"Error fetching version comparison: {e}")
+            return []
+    
+    async def get_training_history(self) -> List[Dict]:
+        """Get training history"""
+        try:
+            return await self._make_request(
+                "GET",
+                "/api/v1/training/training-history"
+            )
+        except Exception as e:
+            logger.error(f"Error getting training history: {str(e)}")
+            return []
+
     async def save_model_metrics(self, metrics_data: Dict) -> Dict:
         try:
             return await self._make_request(

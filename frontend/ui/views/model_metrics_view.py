@@ -337,7 +337,7 @@ class MetricsTab(QWidget):
                 self.update_version_selector(versions)
                 
                 # Fetch metrics for current version
-                model_metrics = await self.api_client.get_model_metrics(version=self.current_version)
+                model_metrics = await self.api_client.get_model_metrics()
                 self.update_model_metrics(model_metrics)
                 self.update_performance_graph(model_metrics)
                 self.update_metrics_table(model_metrics)
