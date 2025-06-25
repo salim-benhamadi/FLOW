@@ -500,7 +500,7 @@ class APIClient:
     async def get_model_versions(self) -> List[str]:
         """Get list of all model versions"""
         try:
-            response = await self._make_request('GET', '/api/model-versions')
+            response = await self._make_request('GET', '/api/v1/training/model-versions')
             return response.get('versions', [])
         except Exception as e:
             logger.error(f"Error fetching model versions: {e}")
@@ -519,7 +519,7 @@ class APIClient:
     async def get_version_comparison_data(self) -> List[Dict]:
         """Get comparison data across all model versions"""
         try:
-            response = await self._make_request('GET', '/api/model-versions/comparison')
+            response = await self._make_request('GET', '/api/v1/training/model-versions/comparison')
             return response.get('comparison_data', [])
         except Exception as e:
             logger.error(f"Error fetching version comparison: {e}")
@@ -572,7 +572,7 @@ class APIClient:
     async def create_model_version(self, version_data: Dict) -> Dict:
         """Create a new model version entry"""
         try:
-            response = await self._make_request('POST', '/api/model-versions', data=version_data)
+            response = await self._make_request('POST', '/api/v1/training/model-versions', data=version_data)
             return response
         except Exception as e:
             logger.error(f"Error creating model version: {e}")

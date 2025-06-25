@@ -93,7 +93,7 @@ class SettingsClient:
         """Fetch available model versions from the cloud"""
         try:
             response = requests.get(
-                f"{self.model_endpoint}/model-versions",
+                f"{self.model_endpoint}/v1/training/model-versions",
                 headers=self.headers,
                 timeout=self.timeout,
                 verify=self.verify_ssl
@@ -112,7 +112,7 @@ class SettingsClient:
         """Get detailed information about a specific model version"""
         try:
             response = requests.get(
-                f"{self.model_endpoint}/model-versions/{version}",
+                f"{self.model_endpoint}/v1/training/model-versions/{version}",
                 headers=self.headers,
                 timeout=self.timeout,
                 verify=self.verify_ssl
@@ -154,7 +154,6 @@ class SettingsClient:
         """Get the latest model version available"""
         versions = self.get_model_versions()
         if versions:
-            # Assuming versions are in format v1, v2, v3, etc.
             return sorted(versions, key=lambda x: int(x[1:]) if x[1:].isdigit() else 0, reverse=True)[0]
         return None
     

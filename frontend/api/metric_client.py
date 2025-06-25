@@ -144,3 +144,13 @@ class MetricClient:
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         await self.close()
+    
+    async def get_model_versions(self) -> List[str]:
+        """Get list of all model versions"""
+        try:
+            response = await self._make_request('GET', '/api/v1/training/model-versions')
+            return response.get('versions', [])
+        except Exception as e:
+            logger.error(f"Error fetching model versions: {e}")
+            return []
+        

@@ -11,7 +11,6 @@ class LoadItemsWorker(QThread):
     def __init__(self, files):
         super().__init__()
         self.files = files
-        print(self.files)
     def run(self):
         VAMOS_TEST = {
             "VAMOS_PU": [6000, 6999],

@@ -75,7 +75,6 @@ class EFFProcessor:
 
     async def process_eff_file(self, file_path: str, product: str, lot: str, insertion: str) -> dict:
         try:
-            print("-"*10)
             logger.debug("Starting EFF file processing: %s", file_path)
             product = product.upper()
             lot = lot.upper()
@@ -94,7 +93,6 @@ class EFFProcessor:
                 reference_id = f"REF_{product}_{lot}_{insertion}_{test_numbers[test_idx]}"
                 if reference_id in reference_ids:
                     continue
-                print("-"*10)    
                 reference_ids.append(reference_id)
                 reference_data = {
                     'reference_id': reference_id,
@@ -114,7 +112,6 @@ class EFFProcessor:
                     ]
                 }
                 await self.api_client.save_reference_data(reference_data)
-            print("-"*10)    
             return {
                 'status': 'success',
                 'reference_ids': reference_ids,

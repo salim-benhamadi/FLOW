@@ -1,6 +1,6 @@
 from PySide6.QtWidgets import (QWidget, QLabel, QVBoxLayout, QHBoxLayout, QPushButton, QCheckBox,
                                QSlider, QComboBox, QGroupBox, QMessageBox, QSpinBox,
-                               QFrame, QPixmap)
+                               QFrame)
 from PySide6.QtGui import QFont, QIcon
 from PySide6.QtCore import Qt, Signal, QTimer
 import json
@@ -107,7 +107,7 @@ class SettingsPage(QWidget):
         infoIcon = QLabel()
         try:
             iconPath = resource_path('./resources/icons/Info.png')
-            infoIcon.setPixmap(QPixmap(iconPath).scaled(32, 32, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            infoIcon.setPixmap(QIcon(iconPath).scaled(32, 32, Qt.KeepAspectRatio, Qt.SmoothTransformation))
         except:
             infoIcon.setText("ℹ")
             infoIcon.setFont(QFont("Arial", 16))

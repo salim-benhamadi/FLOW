@@ -17,7 +17,7 @@ from backend.services import training_service
 from backend.db.database import DatabaseConnection
 db = DatabaseConnection()
 
-router = APIRouter(prefix="/api", tags=["training"])
+router = APIRouter()
 
 @router.get("/model-versions")
 async def get_model_versions():

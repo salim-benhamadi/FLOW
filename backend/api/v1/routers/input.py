@@ -134,9 +134,6 @@ async def delete_input_data(input_id: str):
 async def save_input_data(data: Dict = Body(...)):
     """Save input data and measurements"""
     try:
-
-        print(data)
-        print("----"*20)
         logger.info(f"Attempting to save input data: {data['input_id']}")
         
         
