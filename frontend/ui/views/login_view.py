@@ -54,7 +54,7 @@ class LoginPage(QWidget):
         self.initUI()
 
     def initUI(self):
-        self.setFixedWidth(480)
+        self.setFixedWidth(530)
         self.setMinimumHeight(700)
         mainLayout = QVBoxLayout(self)
         mainLayout.setContentsMargins(20, 20, 20, 20)

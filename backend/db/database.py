@@ -314,12 +314,10 @@ class DatabaseConnection:
         """Execute a single SQL statement with logging"""
         try:
             with self.get_connection() as conn:
-                logger.debug(f"Executing SQL:\n{sql}")
                 if params:
                     conn.execute(text(sql), params)
                 else:
                     conn.execute(text(sql))
-                logger.debug("SQL executed successfully")
             return True
         except Exception as e:
             logger.error(f"Error executing SQL:\n{sql}\nError: {str(e)}")
@@ -464,7 +462,6 @@ class DatabaseConnection:
                     if statement.strip():
                         try:
                             conn.execute(text(statement))
-                            logger.debug(f"Executed SQL statement: {statement[:100]}...")
                         except Exception as e:
                             logger.error(f"Error executing SQL statement: {str(e)}\nStatement: {statement}")
                             raise

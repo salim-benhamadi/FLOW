@@ -19,11 +19,9 @@ class AsyncWorker(QThread):
         self._is_running = False
         self._loop = None
         self._task = None
-        logger.debug("AsyncWorker initialized with kwargs: %s", kwargs)
 
     def run(self):
         try:
-            logger.debug("AsyncWorker starting run")
             self._is_running = True
             
             self._loop = asyncio.new_event_loop()
@@ -31,7 +29,6 @@ class AsyncWorker(QThread):
             
             result = self._loop.run_until_complete(self._safe_run_task())
             
-            logger.debug("Task completed with result: %s", result)
             self.finished.emit(result)
 
         except Exception as e:
@@ -45,7 +42,6 @@ class AsyncWorker(QThread):
             self._task = asyncio.create_task(self.run_task(**self.kwargs))
             return await self._task
         except asyncio.CancelledError:
-            logger.debug("Task was cancelled")
             raise Exception("Operation cancelled")
         except Exception as e:
             logger.error(f"Task execution error: {str(e)}")
@@ -54,7 +50,6 @@ class AsyncWorker(QThread):
             pass
 
     def _cleanup(self):
-        logger.debug("Starting worker cleanup")
         try:
             if self._loop and not self._loop.is_closed():
                 pending_tasks = list(asyncio.all_tasks(self._loop))
@@ -82,17 +77,14 @@ class AsyncWorker(QThread):
             self._loop = None
             self._task = None
             self._is_running = False
-            logger.debug("Worker cleanup completed")
 
     def stop(self):
-        logger.debug("Stopping worker")
         if self._is_running and self._loop and not self._loop.is_closed():
             try:
                 self._loop.call_soon_threadsafe(self._cancel_task)
             except Exception as e:
                 logger.error("Error cancelling task: %s", str(e))
         self.wait()
-        logger.debug("Worker stopped")
     
     def _cancel_task(self):
         if self._task and not self._task.done():

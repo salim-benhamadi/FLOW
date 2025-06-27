@@ -6,6 +6,8 @@ from typing import List, Dict
 import os
 import zipfile
 import tempfile
+import pickle
+import datetime
 from ui.utils.EFFExtractor import EFFExtractor, ExtractorType
 from ui.utils.ExtractionWorker import ExtractionWorker
 from ui.utils.EFFValidator import EFFValidator
@@ -39,7 +41,6 @@ class LotInputWithInsertion(QWidget):
             firstRowLayout.addWidget(self.wafer_input)
         
         self.deleteBtn = QPushButton()
-        self.deleteBtn.setIcon(QIcon(self.delete_icon_path))
         self.deleteBtn.setFixedSize(30, 30)
         self.deleteBtn.setStyleSheet("QPushButton { border: none; } QPushButton:hover { background-color: #f0f0f0; }")
         self.deleteBtn.clicked.connect(lambda: self.deleted.emit(self))
@@ -110,6 +111,7 @@ class UploadPage(QWidget):
     show_selection_signal = Signal(list) 
     show_admin_login_signal = Signal()
     show_settings_signal = Signal()
+    load_dashboard_signal = Signal(object)
 
     def __init__(self):
         super().__init__()
@@ -136,7 +138,7 @@ class UploadPage(QWidget):
         self.initUI()
 
     def initUI(self):
-        self.setFixedWidth(480)
+        self.setFixedWidth(530)
         self.setMinimumHeight(700)
         self.setAcceptDrops(True)
         
@@ -153,6 +155,7 @@ class UploadPage(QWidget):
         scrollLayout = QVBoxLayout(scrollContent)
         scrollLayout.setContentsMargins(40, 20, 40, 40)
         
+        self.setupDashboardImportSection(scrollLayout)
         self.setupDragDropSection(scrollLayout)
         self.setupSeparator(scrollLayout)
         self.setupLotBasedSection(scrollLayout)
@@ -180,7 +183,6 @@ class UploadPage(QWidget):
         titleLayout.addWidget(title)
         titleLayout.addWidget(subtitle)
         
-        # Settings button
         self.settingsButton = QPushButton("Settings")
         try:
             settings_icon = resource_path(os.path.join('./resources/icons', 'settings.png'))
@@ -246,6 +248,119 @@ class UploadPage(QWidget):
     def show_settings(self):
         """Emit signal to show settings page"""
         self.show_settings_signal.emit()
+
+    def setupDashboardImportSection(self, mainLayout):
+        """Setup import dashboard section"""
+        importSection = QWidget()
+        importSection.setStyleSheet("""
+            border: 2px solid #17A2B8;
+            background-color: #F8F9FA;
+            border-radius: 5px;
+            padding: 10px;
+        """)
+        importSection.setFixedHeight(80)
+        
+        importLayout = QHBoxLayout(importSection)
+        
+        importIcon = QLabel()
+        importIcon.setText("📊")
+        importIcon.setFont(QFont("Arial", 20))
+        
+        importIcon.setStyleSheet("border: none; padding: 5px;")
+        importIcon.setAlignment(Qt.AlignCenter)
+        
+        importTextLayout = QVBoxLayout()
+        importText = QLabel('Import Dashboard')
+        importText.setFont(QFont("Arial", 10, QFont.Bold))
+        importText.setStyleSheet("border: none; color: #17A2B8;")
+        
+        importSubtext = QLabel('Load a previously exported dashboard')
+        importSubtext.setFont(QFont("Arial", 8))
+        importSubtext.setStyleSheet("border: none; color: gray;")
+        
+        importTextLayout.addWidget(importText)
+        importTextLayout.addWidget(importSubtext)
+        importTextLayout.setSpacing(0)
+        self.importDashboardButton = QPushButton("Import Dashboard")
+        self.importDashboardButton.setStyleSheet("""
+            QPushButton {
+                background-color: #17A2B8;
+                color: white;
+                border-radius: 5px;
+                padding: 8px 15px;
+                margin: 5px;
+            }
+            QPushButton:hover {
+                background-color: #138496;
+            }
+        """)
+        self.importDashboardButton.clicked.connect(self.importDashboard)
+        
+        importLayout.addWidget(importIcon)
+        importLayout.addLayout(importTextLayout)
+        importLayout.addStretch()
+        importLayout.addWidget(self.importDashboardButton)
+        
+        mainLayout.addWidget(importSection)
+        
+        importMessage = QLabel("Import a .pkl dashboard file to restore a previous session")
+        importMessage.setStyleSheet("color: gray; margin-top: 5px; margin-bottom: 20px; font-size: 10px;")
+        mainLayout.addWidget(importMessage)
+
+    def importDashboard(self):
+        """Import dashboard from pickle file"""
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Import Dashboard",
+            "",
+            "Dashboard Files (*.pkl)"
+        )
+        if path:
+            try:
+                with open(path, 'rb') as f:
+                    dashboard_data = pickle.load(f)
+                
+                # Validate dashboard data structure
+                if not isinstance(dashboard_data, dict):
+                    raise ValueError("Invalid dashboard file format")
+                
+                required_keys = ['data', 'visible_columns', 'all_columns', 'table_data', 'metadata']
+                if not all(key in dashboard_data for key in required_keys):
+                    raise ValueError("Dashboard file is missing required data")
+                
+                # Show confirmation dialog
+                metadata = dashboard_data.get('metadata', {})
+                export_date = metadata.get('export_date', 'Unknown')
+                rows = metadata.get('rows', 0)
+                columns = metadata.get('columns', 0)
+                
+                reply = QMessageBox.question(
+                    self,
+                    "Import Dashboard",
+                    f"Dashboard Information:\n"
+                    f"Export Date: {export_date}\n"
+                    f"Rows: {rows}\n"
+                    f"Columns: {columns}\n\n"
+                    f"Do you want to import this dashboard?",
+                    QMessageBox.Yes | QMessageBox.No
+                )
+                
+                if reply == QMessageBox.Yes:
+                    # Emit signal to load dashboard
+                    self.load_dashboard_signal.emit(dashboard_data)
+                    
+                    QMessageBox.information(
+                        self,
+                        "Import Successful",
+                        "Dashboard imported successfully!"
+                    )
+                
+            except Exception as e:
+                QMessageBox.critical(
+                    self,
+                    "Import Failed",
+                    f"Failed to import dashboard:\n{str(e)}"
+                )
 
     def setupDragDropSection(self, mainLayout):
         self.dragDropSection = QWidget()
@@ -752,3 +867,4 @@ class UploadPage(QWidget):
             fileWidget.setParent(None)
             fileWidget.deleteLater()
         self.proceedButton.setEnabled(False)
+        self.deleteBtn.set

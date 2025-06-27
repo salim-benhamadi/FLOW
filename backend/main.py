@@ -79,7 +79,6 @@ async def health_check():
 async def startup_event():
     """Application startup event"""
     logger.info(f"Starting {settings.APP_NAME} v{settings.VERSION}")
-    logger.info(f"Debug mode: {settings.DEBUG}")
     logger.info(f"API running on {settings.API_HOST}:{settings.API_PORT}")
     
     # Test database connection on startup

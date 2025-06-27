@@ -75,7 +75,6 @@ async def list_input_data():
             ORDER BY created_at DESC
         """
         results = await db.execute_query(query)
-        logger.debug(f"Got {len(results)} input data entries")
         return results
     except Exception as e:
         logger.error(f"Error listing input data: {str(e)}")
@@ -145,12 +144,9 @@ async def save_input_data(data: Dict = Body(...)):
             'lsl': data.get('lsl'),
             'usl': data.get('usl')
         }
-        
-        logger.debug(f"Processed input data: {input_data}")
-        
+                
         measurements = []
         if 'measurements' in data:
-            logger.debug(f"Number of measurements: {len(data['measurements'])}")
             measurements = [
                 {
                     'chip_number': m['chip_number'],

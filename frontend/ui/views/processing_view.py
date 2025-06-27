@@ -23,7 +23,7 @@ class ProcessingPage(QWidget):
         self.initUI()
 
     def initUI(self):
-        self.setFixedWidth(480)
+        self.setFixedWidth(530)
         self.setMinimumHeight(500)
         self.setStyleSheet("""
             QWidget {

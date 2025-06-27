@@ -66,7 +66,6 @@ class ConnectionWorker(QThread):
                 return False, "Backend unhealthy"
                 
         except Exception as e:
-            logger.debug(f"Connection check failed: {e}")
             return False, f"Offline: {str(e)}"
         finally:
             if self.api_client:

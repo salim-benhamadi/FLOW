@@ -75,7 +75,6 @@ class EFFProcessor:
 
     async def process_eff_file(self, file_path: str, product: str, lot: str, insertion: str) -> dict:
         try:
-            logger.debug("Starting EFF file processing: %s", file_path)
             product = product.upper()
             lot = lot.upper()
             insertion = insertion.upper()

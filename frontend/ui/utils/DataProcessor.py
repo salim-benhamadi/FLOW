@@ -21,22 +21,6 @@ class DataProcessor(QThread):
     result = Signal(object)
     error = Signal(str)
     file_processed = Signal(str, bool)
-
-    VAMOS_TEST = {
-        "VAMOS_PU": [6000, 6999],
-        "VAMOS_CFS": [7000, 7999],
-        "VAMOS_IDD": [10000, 19999],
-        "VAMOS_PMU": [20000, 29999],
-        "VAMOS_GPIO": [30000, 39999],
-        "VAMOS_OSC": [40000, 49999],
-        "VAMOS_ATPG": [50000, 59999],
-        "VAMOS_IDDQ": [60000, 69999],
-        "VAMOS_MEM": [70000, 79999],
-        "VAMOS_UM": [80000, 89999],
-        "VAMOS_LIB": [90000, 99999],
-        "VAMOS_spare": [100000, 109999]
-    }
-
     def __init__(self, selected_items: Optional[List[str]] = None, files: List[str] = None, 
                  reference_config: Dict = None, sensitivity: float = 0.5, model_version: str = None):
         super().__init__()
@@ -276,18 +260,8 @@ class DataProcessor(QThread):
         yield_loss = round(failures / total_count * 100, 2)
         rejection_rate = round(failures / total_count * 100, 2)
         
-        return yield_rate, yield_loss, rejection_rate
-
-    def get_module(self, test_number: Union[int, str]) -> str:
-        try:
-            test_num = int(float(test_number))
-            for module, (start, end) in self.VAMOS_TEST.items():
-                if start <= test_num <= end:
-                    return module
-            return "Unknown"
-        except (ValueError, TypeError):
-            return "Unknown"
-
+        return yield_rate, yield_loss, rejection_rate 
+    
     def calculate_percentiles(self, data: np.ndarray) -> Dict[str, float]:
         try:
             return {
@@ -485,7 +459,6 @@ class DataProcessor(QThread):
                     result_df["Yield"] = yield_values
                     result_df["Yield_Loss"] = yield_loss_values
                     result_df["Rejection_Rate"] = rejection_rate_values
-                    result_df["Module"] = result_df["Test Number"].map(self.get_module)
                     
                     result_df["input_data"] = result_df["Test Name"].map(input_data_dict)
                     result_df["reference_data"] = result_df["Test Name"].map(reference_data_dict)

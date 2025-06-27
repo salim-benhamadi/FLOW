@@ -64,11 +64,8 @@ async def upload_reference_data(file: UploadFile = File(...)):
 async def list_reference_data():
     """Get list of all reference data"""
     try:
-        logger.debug("Starting reference data fetch")
         db = DatabaseConnection()
         results = await db.get_reference_data_list()
-        logger.debug(f"Got {len(results)} reference data entries")
-        logger.debug(f"First result (if any): {results[0] if results else None}")
         return results
     except Exception as e:
         logger.error(f"Error listing reference data: {str(e)}")
@@ -139,10 +136,7 @@ async def save_reference_data(data: Dict = Body(...)):
             'lsl': data['lsl'],
             'usl': data['usl']
         }
-        
-        logger.debug(f"Processed reference data: {reference_data}")
-        logger.debug(f"Number of measurements: {len(data['measurements'])}")
-        
+         
         measurements = [
             {
                 'chip_number': m['chip_number'],

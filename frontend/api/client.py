@@ -55,10 +55,6 @@ class APIClient:
         """Make HTTP request with proper error handling"""
         client = await self._get_client()
         try:
-            # Add some logging for debugging
-            if not is_production():
-                logger.debug(f"Making {method} request to {url}")
-                
             response = await client.request(method, url, **kwargs)
             response.raise_for_status()
             

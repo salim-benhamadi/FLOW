@@ -7,44 +7,32 @@ from ui.utils.PathResources import resource_path
 from ui.utils.Effio import EFF
 
 class LoadItemsWorker(QThread):
-    finished = Signal(dict)
+    finished = Signal(list)  # Changed from dict to list since we're not grouping
     
     def __init__(self, files):
         super().__init__()
         self.files = files
         
     def run(self):
-        VAMOS_TEST = {
-            "VAMOS_PU": [6000, 6999],
-            "VAMOS_CFS": [7000, 7999],
-            "VAMOS_IDD": [10000, 19999],
-            "VAMOS_PMU": [20000, 29999],
-            "VAMOS_GPIO": [30000, 39999],
-            "VAMOS_OSC": [40000, 49999],
-            "VAMOS_ATPG": [50000, 59999],
-            "VAMOS_IDDQ": [60000, 69999],
-            "VAMOS_MEM": [70000, 79999],
-            "VAMOS_UM": [80000, 89999],
-            "VAMOS_LIB": [90000, 99999],
-            "VAMOS_spare": [100000, 109999]
-        }
-        
-        file_groups = {}
+        all_tests = []
         for file_path in self.files:
             df, metadata = EFF.read(file_path)
             test_numbers = list(set(EFF.get_test_numbers(df)))
-            for key, value in VAMOS_TEST.items():
-                tmp = []
-                for x in test_numbers:
-                    if int(x) in range(value[0], value[1]+1) and x not in tmp:
-                        tmp.append(x)
-                if tmp:
-                    test_names = EFF.get_description_rows(df, header="auto")[tmp].loc['<+ParameterName>'].tolist()
-                    file_groups[key] = [f"{x};{y}" for x, y in zip(tmp, test_names)]
+            
+            # Get test names for all test numbers
+            if test_numbers:
+                test_names = EFF.get_description_rows(df, header="auto")[test_numbers].loc['<+ParameterName>'].tolist()
+                # Create test items with format "test_number;test_name"
+                for test_num, test_name in zip(test_numbers, test_names):
+                    test_item = f"{test_num};{test_name}"
+                    if test_item not in all_tests:  # Avoid duplicates
+                        all_tests.append(test_item)
         
-        self.finished.emit(file_groups)
+        # Sort tests by test number
+        all_tests.sort(key=lambda x: int(x.split(';')[0]))
+        self.finished.emit(all_tests)
 
-class GroupListWidget(QListWidget):
+class TestListWidget(QListWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setSelectionMode(QListWidget.ExtendedSelection)  
@@ -74,7 +62,7 @@ class SelectionPage(QWidget):
         self.initUI()
 
     def initUI(self):
-        self.setFixedWidth(480)
+        self.setFixedWidth(530)
         self.setMinimumHeight(700)
         self.setStyleSheet("background-color: white; color: black")
         
@@ -179,7 +167,7 @@ class SelectionPage(QWidget):
         # Available list section
         availableLabel = QLabel("Available Tests")
         availableLabel.setFont(QFont("Arial", 10, QFont.Bold))
-        self.availableList = GroupListWidget()
+        self.availableList = TestListWidget()
         mainLayout.addWidget(availableLabel)
         mainLayout.addWidget(self.availableList)
 
@@ -222,148 +210,120 @@ class SelectionPage(QWidget):
         # Selected list section
         selectedLabel = QLabel("Selected Tests")
         selectedLabel.setFont(QFont("Arial", 10, QFont.Bold))
-        self.selectedList = GroupListWidget()
+        self.selectedList = TestListWidget()
         mainLayout.addWidget(selectedLabel)
         mainLayout.addWidget(self.selectedList)
         mainLayout.addWidget(self.loadingWidget)
         mainLayout.setContentsMargins(40,40,40,40)
 
-    def populate_lists(self, file_groups):
+    def populate_lists(self, all_tests):
         self.availableList.clear()
         
-        # Add groups and their items
-        for group, items in file_groups.items():
-            # Add group header
-            group_item = QListWidgetItem(group)
-            group_item.setBackground(QColor("#f0f0f0"))
-            group_item.setFlags(Qt.ItemIsEnabled)  # Make it non-selectable
-            self.availableList.addItem(group_item)
-            
-            # Add group items
-            for item in items:
-                test_item = QListWidgetItem(f"  {item}")  # Indent items
-                test_item.setData(Qt.UserRole, {"group": group, "item": item})
-                self.availableList.addItem(test_item)
+        # Add all tests directly without grouping
+        for test_item in all_tests:
+            list_item = QListWidgetItem(test_item)
+            list_item.setData(Qt.UserRole, {"item": test_item})
+            self.availableList.addItem(list_item)
 
     def filter_items(self, text):
         text = text.lower()
-        current_group = None
-        show_current_group = False
-
+        
         for i in range(self.availableList.count()):
             item = self.availableList.item(i)
-            item_flags = item.flags()
-            
-            # Check if it's a group header
-            if not item_flags & Qt.ItemIsSelectable:
-                current_group = item
-                show_current_group = False
-                item.setHidden(True)  # Hide group initially
-            else:
-                matches = text in item.text().lower()
-                item.setHidden(not matches)
-                if matches and current_group:
-                    current_group.setHidden(False)
+            matches = text in item.text().lower()
+            item.setHidden(not matches)
 
     def move_selected_down(self):
         selected_items = self.availableList.selectedItems()
         for item in selected_items:
-            # Only move actual items, not group headers
-            if item.flags() & Qt.ItemIsSelectable:
-                new_item = QListWidgetItem(item.text())
-                new_item.setData(Qt.UserRole, item.data(Qt.UserRole))
-                self.selectedList.addItem(new_item)
-                self.availableList.takeItem(self.availableList.row(item))
+            new_item = QListWidgetItem(item.text())
+            new_item.setData(Qt.UserRole, item.data(Qt.UserRole))
+            self.selectedList.addItem(new_item)
+            self.availableList.takeItem(self.availableList.row(item))
         self.update_process_button_state()
 
     def move_selected_up(self):
         selected_items = self.selectedList.selectedItems()
-        data_to_move = []
+        items_to_move = []
         
         # Collect items to move
         for item in selected_items:
             data = item.data(Qt.UserRole)
-            data_to_move.append((data["group"], data["item"], item.text()))
+            items_to_move.append((data["item"], item.text()))
             self.selectedList.takeItem(self.selectedList.row(item))
         
-        # Find appropriate positions in available list and insert
-        for group, item, text in data_to_move:
-            # Find group position
-            group_index = -1
+        # Sort items by test number to maintain order
+        items_to_move.sort(key=lambda x: int(x[0].split(';')[0]))
+        
+        # Add items back to available list in sorted order
+        for item_data, text in items_to_move:
+            # Find correct position to insert (maintain sorted order)
+            insert_pos = 0
             for i in range(self.availableList.count()):
-                list_item = self.availableList.item(i)
-                if not list_item.flags() & Qt.ItemIsSelectable and list_item.text() == group:
-                    group_index = i
+                existing_item = self.availableList.item(i)
+                existing_test_num = int(existing_item.data(Qt.UserRole)["item"].split(';')[0])
+                current_test_num = int(item_data.split(';')[0])
+                if current_test_num < existing_test_num:
+                    insert_pos = i
                     break
+                insert_pos = i + 1
             
-            if group_index != -1:
-                # Find position after group header
-                insert_pos = group_index + 1
-                while (insert_pos < self.availableList.count() and 
-                       self.availableList.item(insert_pos).flags() & Qt.ItemIsSelectable):
-                    insert_pos += 1
-                
-                new_item = QListWidgetItem(text)
-                new_item.setData(Qt.UserRole, {"group": group, "item": item})
-                self.availableList.insertItem(insert_pos, new_item)
+            new_item = QListWidgetItem(text)
+            new_item.setData(Qt.UserRole, {"item": item_data})
+            self.availableList.insertItem(insert_pos, new_item)
         
         self.update_process_button_state()
 
     def move_all_down(self):
-        i = 0
-        while i < self.availableList.count():
+        # Move all items from available to selected
+        items_to_move = []
+        for i in range(self.availableList.count()):
             item = self.availableList.item(i)
-            if item.flags() & Qt.ItemIsSelectable:  # Only move selectable items
-                new_item = QListWidgetItem(item.text())
-                new_item.setData(Qt.UserRole, item.data(Qt.UserRole))
-                self.selectedList.addItem(new_item)
-                self.availableList.takeItem(i)
-            else:
-                i += 1
+            items_to_move.append((item.text(), item.data(Qt.UserRole)))
+        
+        self.availableList.clear()
+        
+        for text, data in items_to_move:
+            new_item = QListWidgetItem(text)
+            new_item.setData(Qt.UserRole, data)
+            self.selectedList.addItem(new_item)
+        
         self.update_process_button_state()
 
     def move_all_up(self):
         if self.selectedList.count() == 0:
             return
 
+        # Move all items from selected back to available
         items_to_move = []
         for i in range(self.selectedList.count()):
             item = self.selectedList.item(i)
             data = item.data(Qt.UserRole)
-            items_to_move.append((data["group"], data["item"], item.text()))
+            items_to_move.append((data["item"], item.text()))
         
         self.selectedList.clear()
-        items_to_move.sort(key=lambda x: x[0])
-        group_positions = {}
-        for i in range(self.availableList.count()):
-            item = self.availableList.item(i)
-            if not item.flags() & Qt.ItemIsSelectable: 
-                group_positions[item.text()] = i
         
-        current_group = None
-        for group, item, text in items_to_move:
-            if group != current_group:
-                if group not in group_positions:
-                    group_item = QListWidgetItem(group)
-                    group_item.setBackground(QColor("#f0f0f0"))
-                    group_item.setFlags(Qt.ItemIsEnabled)
-                    self.availableList.addItem(group_item)
-                    group_positions[group] = self.availableList.count() - 1
-                current_group = group
-            
-            insert_pos = group_positions[group] + 1
-            while (insert_pos < self.availableList.count() and 
-                self.availableList.item(insert_pos).flags() & Qt.ItemIsSelectable and
-                self.availableList.item(insert_pos).data(Qt.UserRole)["group"] == group):
-                insert_pos += 1
+        # Sort by test number
+        items_to_move.sort(key=lambda x: int(x[0].split(';')[0]))
+        
+        # Add back to available list in sorted order
+        for item_data, text in items_to_move:
+            # Find correct position to insert
+            insert_pos = 0
+            for i in range(self.availableList.count()):
+                existing_item = self.availableList.item(i)
+                existing_test_num = int(existing_item.data(Qt.UserRole)["item"].split(';')[0])
+                current_test_num = int(item_data.split(';')[0])
+                if current_test_num < existing_test_num:
+                    insert_pos = i
+                    break
+                insert_pos = i + 1
             
             new_item = QListWidgetItem(text)
-            new_item.setData(Qt.UserRole, {"group": group, "item": item})
+            new_item.setData(Qt.UserRole, {"item": item_data})
             self.availableList.insertItem(insert_pos, new_item)
-            
-            for g, pos in group_positions.items():
-                if pos >= insert_pos:
-                    group_positions[g] += 1
+        
+        self.update_process_button_state()
 
     def update_process_button_state(self):
         has_selection = self.selectedList.count() > 0
@@ -374,7 +334,7 @@ class SelectionPage(QWidget):
         for i in range(self.selectedList.count()):
             item = self.selectedList.item(i)
             data = item.data(Qt.UserRole)
-            if data:  # Only add actual test items, not group headers
+            if data:  # Only add actual test items
                 selected_items.append(f"{data['item']}")
         return selected_items
 
@@ -397,9 +357,9 @@ class SelectionPage(QWidget):
         self.worker.finished.connect(self.on_loading_finished)
         self.worker.start()
 
-    def on_loading_finished(self, file_groups):
+    def on_loading_finished(self, all_tests):
         self.loadingWidget.hide()
-        self.populate_lists(file_groups)
+        self.populate_lists(all_tests)
     
     def set_reference_config(self, reference_config):
         """Store reference configuration for processing"""

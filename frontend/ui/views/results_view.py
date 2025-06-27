@@ -15,6 +15,7 @@ from PySide6.QtCore import Signal
 import fpdf
 import json
 import datetime
+import pickle
 from PySide6.QtWidgets import QStyledItemDelegate
 from PySide6.QtCore import Qt
 import logging
@@ -27,8 +28,8 @@ logger = logging.getLogger(__name__)
 
 class AsyncHelper(QObject):
     """Helper class to run async tasks from Qt"""
-    finished = Signal(dict)  # Signal to emit when async operation completes
-    error = Signal(str)      # Signal to emit when async operation fails
+    finished = Signal(dict)
+    error = Signal(str)
 
     def __init__(self):
         super().__init__()
@@ -46,12 +47,10 @@ class AsyncHelper(QObject):
                 async with feedback_client, input_client:
                     results = {}
                     
-                    # Submit feedback if present
                     if data.get('feedback_data'):
                         feedback_result = await feedback_client.submit_feedback(data['feedback_data'])
                         results['feedback'] = feedback_result
                     
-                    # Submit input data if present
                     if data.get('input_data') and data.get('measurements'):
                         input_result = await input_client.save_input_data({
                             'input_data': data['input_data'],
@@ -76,7 +75,6 @@ class ResultPage(QWidget):
 
     def __init__(self):
         super().__init__()
-        # Set default visible columns
         self.default_columns = ["Test Name", "Test Number", "Product", "Status",
                               "Mean", "Std"]
         self.visible_columns = self.default_columns + ["ACTION"]
@@ -93,7 +91,7 @@ class ResultPage(QWidget):
         mainLayout.setSpacing(0)
         row1 = QHBoxLayout()
         titleLayout = QVBoxLayout()
-        title = QLabel("Dashboard")  # Made uppercase
+        title = QLabel("Dashboard")
         title.setFont(QFont("Arial", 12, QFont.Bold))
         title.setStyleSheet("margin-bottom: 0px;")
         subtitle = QLabel("Your files are being processed")
@@ -106,7 +104,6 @@ class ResultPage(QWidget):
         row1.addLayout(titleLayout)
         row1.addStretch()
 
-        # Export and Restart buttons
         self.restartButton = QPushButton("Restart") 
         self.restartButton.setStyleSheet("""
             QPushButton {
@@ -132,7 +129,6 @@ class ResultPage(QWidget):
             }
         """)
         
-        # Export menu setup
         self.exportMenu = QMenu()
         self.exportMenu.addAction("CSV", self.exportCSV)
         self.exportMenu.addAction("Excel", self.exportExcel)
@@ -140,6 +136,19 @@ class ResultPage(QWidget):
         self.exportMenu.addAction("HTML", self.exportHTML)
         self.exportButton.setMenu(self.exportMenu)
         self.exportButton.setPopupMode(QToolButton.InstantPopup)
+
+        self.exportDashboardButton = QPushButton("Export Dashboard")
+        self.exportDashboardButton.setStyleSheet("""
+            QPushButton {
+                background-color: #17A2B8;
+                color: white;
+                border-radius: 5px;
+                padding: 0px 15px;
+                max-height: 27px;
+                margin-right: 5px;
+            }
+        """)
+        self.exportDashboardButton.clicked.connect(self.exportDashboard)
 
         self.configButton = QPushButton("Configuration")
         self.configButton.setStyleSheet("""
@@ -155,10 +164,10 @@ class ResultPage(QWidget):
         self.configButton.clicked.connect(self.showConfiguration)
         
         row1.addWidget(self.exportButton, alignment=Qt.AlignRight)
+        row1.addWidget(self.exportDashboardButton, alignment=Qt.AlignRight)
         row1.addWidget(self.configButton, alignment=Qt.AlignRight)
         row1.addWidget(self.restartButton, alignment=Qt.AlignRight)
 
-        # Search layout
         searchLayout = QHBoxLayout()
         searchBoxLayout = QHBoxLayout()
         
@@ -198,7 +207,6 @@ class ResultPage(QWidget):
         searchLayout.addLayout(searchBoxLayout)
         searchLayout.addWidget(filterIcon)
 
-        # Table setup with new styling
         self.table = QTableWidget()
         self.table.setColumnCount(7)
         self.table.setHorizontalHeaderLabels([
@@ -206,7 +214,6 @@ class ResultPage(QWidget):
                               "Mean", "Std", "ACTION"
         ])
         
-        # Enable grid and set table styling with clearer borders
         self.table.setShowGrid(True)
         self.table.setStyleSheet("""
             QTableWidget {
@@ -224,7 +231,6 @@ class ResultPage(QWidget):
             }
         """)
         
-        # More explicit header styling
         self.table.horizontalHeader().setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         self.table.horizontalHeader().setStyleSheet("""
             QHeaderView::section {
@@ -241,11 +247,9 @@ class ResultPage(QWidget):
             }
         """)
         
-        # Set sizing modes
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.table.verticalHeader().setVisible(False)
         
-        # Ensure content is left-aligned in cells
         self.table.setItemDelegate(LeftAlignDelegate())
         
         row1.setContentsMargins(0,0,0,20)
@@ -258,16 +262,16 @@ class ResultPage(QWidget):
     def apply_status_styling(self, item, status):
         """Apply color styling to status cell"""
         item = QTableWidgetItem(status)
-        item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)  # Ensure left alignment
+        item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         status = status.strip().lower()
         if status == "similar distribution":
-            item.setForeground(QBrush(QColor("#1E7D34")))  # Green
+            item.setForeground(QBrush(QColor("#1E7D34")))
             item.setFont(QFont("Arial", weight=QFont.Bold))
         elif status == "moderately similar":
-            item.setForeground(QBrush(QColor("#B88A00")))  # Orange
+            item.setForeground(QBrush(QColor("#B88A00")))
             item.setFont(QFont("Arial", weight=QFont.Bold))
         elif status == "completely different":
-            item.setForeground(QBrush(QColor("#D9534F")))  # Red
+            item.setForeground(QBrush(QColor("#D9534F")))
             item.setFont(QFont("Arial", weight=QFont.Bold))
         
         return item
@@ -280,64 +284,104 @@ class ResultPage(QWidget):
             if hasattr(self, 'data'):
                 self.populateTable(self.data)
 
+    def exportDashboard(self):
+        """Export complete dashboard state as pickle file"""
+        path, _ = QFileDialog.getSaveFileName(
+            self, 
+            "Export Dashboard", 
+            f"dashboard_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.pkl", 
+            "Dashboard Files (*.pkl)"
+        )
+        if path:
+            try:
+                dashboard_data = {
+                    'data': self.data if hasattr(self, 'data') else None,
+                    'visible_columns': self.visible_columns,
+                    'all_columns': self.all_columns,
+                    'table_data': self._extract_table_data(),
+                    'metadata': {
+                        'export_date': datetime.datetime.now().isoformat(),
+                        'version': '1.0',
+                        'rows': self.table.rowCount(),
+                        'columns': self.table.columnCount()
+                    }
+                }
+                
+                with open(path, 'wb') as f:
+                    pickle.dump(dashboard_data, f)
+                
+                QMessageBox.information(
+                    self,
+                    "Export Successful",
+                    f"Dashboard exported successfully to:\n{path}"
+                )
+            except Exception as e:
+                QMessageBox.critical(
+                    self,
+                    "Export Failed",
+                    f"Failed to export dashboard:\n{str(e)}"
+                )
+
+    def _extract_table_data(self):
+        """Extract all table data for export"""
+        table_data = []
+        for row in range(self.table.rowCount()):
+            row_data = {}
+            for col in range(self.table.columnCount() - 1):
+                header = self.table.horizontalHeaderItem(col)
+                if header:
+                    item = self.table.item(row, col)
+                    row_data[header.text()] = item.text() if item else ""
+            table_data.append(row_data)
+        return table_data
+
     def populateTable(self, df):
         if df is None:
             return
         
         self.data = df
         
-        # Filter out reference columns
         self.all_columns = [col for col in df.columns if not (
             col.endswith('_reference') or 
             col in ['input_data', 'reference_data'] or
             '_reference' in col
         )]
         
-        # Ensure all default columns are visible
         for col in self.default_columns:
             if col not in self.visible_columns:
                 self.visible_columns.append(col)
         
-        # Ensure ACTION is always the last column
         if "ACTION" in self.visible_columns:
             self.visible_columns.remove("ACTION")
         self.visible_columns.append("ACTION")
         
-        # Set row count
         self.table.setRowCount(len(self.data))
         
-        # Populate table
         for i, (index, row) in enumerate(self.data.iterrows()):
             for col_index, column in enumerate(self.visible_columns):
                 if column == "ACTION":
-                    # Only create action widget for ACTION column
                     action_widget = self.create_action_buttons(i)
                     self.table.setCellWidget(i, col_index, action_widget)
                 else:
-                    # For all other columns, create regular table items
                     value = str(row.get(column, ""))
                     item = QTableWidgetItem(value)
                     item.setFlags(item.flags() & ~Qt.ItemIsEditable)
                     item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
                     
-                    # Apply special styling for Status column
                     if column == "Status":
                         item = self.apply_status_styling(item, value)
                     
                     self.table.setItem(i, col_index, item)
 
     def updateTableColumns(self):
-        # Ensure ACTION is the last column
         if "ACTION" in self.visible_columns:
             self.visible_columns.remove("ACTION")
         self.visible_columns.append("ACTION")
         
-        # Clear the table first
         self.table.clear()
         self.table.setColumnCount(len(self.visible_columns))
         self.table.setHorizontalHeaderLabels(self.visible_columns)
         
-        # Set column properties
         for i, column in enumerate(self.visible_columns):
             if column == "ACTION":
                 self.table.horizontalHeader().setSectionResizeMode(i, QHeaderView.Fixed)
@@ -345,7 +389,6 @@ class ResultPage(QWidget):
             else:
                 self.table.horizontalHeader().setSectionResizeMode(i, QHeaderView.Stretch)
         
-        # Reapply data if available
         if hasattr(self, 'data'):
             self.populateTable(self.data)
 
@@ -489,9 +532,7 @@ class ResultPage(QWidget):
         """Handle removal of a row"""
         try:
             self.table.removeRow(row)
-            # Remove from DataFrame
             self.data = self.data.drop(self.data.index[row])
-            print(f"Row {row} removed successfully")
         except Exception as e:
             print(f"Error removing row: {str(e)}")
 
@@ -499,18 +540,16 @@ class ResultPage(QWidget):
         path, _ = QFileDialog.getSaveFileName(self, "Save CSV", "", "CSV Files (*.csv)")
         if path:
             with open(path, 'w') as file:
-                # Write headers first
                 headers = []
-                for column in range(self.table.columnCount() - 1):  # Omit the action column
+                for column in range(self.table.columnCount() - 1):
                     header = self.table.horizontalHeaderItem(column)
                     if header:
                         headers.append(header.text())
                 file.write(",".join(headers) + "\n")
                 
-                # Write data rows
                 for row in range(self.table.rowCount()):
                     rowData = []
-                    for column in range(self.table.columnCount() - 1):  # Omit the action column
+                    for column in range(self.table.columnCount() - 1):
                         item = self.table.item(row, column)
                         if item:
                             rowData.append(item.text())
@@ -526,23 +565,20 @@ class ResultPage(QWidget):
                 wb = Workbook()
                 ws = wb.active
                 
-                # Write headers with bold font
                 headers = []
                 bold_font = Font(bold=True)
-                for column in range(self.table.columnCount() - 1):  # Omit the action column
+                for column in range(self.table.columnCount() - 1):
                     header = self.table.horizontalHeaderItem(column)
                     if header:
                         cell = ws.cell(row=1, column=column + 1, value=header.text())
                         cell.font = bold_font
                 
-                # Write data rows
                 for row in range(self.table.rowCount()):
                     row_data = []
-                    for column in range(self.table.columnCount() - 1):  # Omit the action column
+                    for column in range(self.table.columnCount() - 1):
                         item = self.table.item(row, column)
                         if item:
                             row_data.append(item.text())
-                    # Excel rows are 1-based and we need to account for the header row
                     for col, value in enumerate(row_data, 1):
                         ws.cell(row=row + 2, column=col, value=value)
                 
@@ -558,39 +594,28 @@ class ResultPage(QWidget):
                 
                 class PDF(FPDF):
                     def header(self):
-                        # Arial bold 15
                         self.set_font('Arial', 'B', 15)
-                        # Move to the right
                         self.cell(80)
-                        # Title
                         self.cell(30, 10, 'Test Results', 0, 0, 'C')
-                        # Line break
                         self.ln(20)
 
-                # Create PDF object
                 pdf = PDF()
-                # Add a page
                 pdf.add_page()
                 
-                # Set font for headers
                 pdf.set_font("Arial", 'B', 10)
                 
-                # Calculate column width (excluding action column)
                 col_width = pdf.w / (self.table.columnCount() - 1)
                 
-                # Write headers
-                for column in range(self.table.columnCount() - 1):  # Omit the action column
+                for column in range(self.table.columnCount() - 1):
                     header = self.table.horizontalHeaderItem(column)
                     if header:
                         pdf.cell(col_width, 10, str(header.text()), 1)
                 pdf.ln()
                 
-                # Set font for data
                 pdf.set_font("Arial", size=10)
                 
-                # Write data rows
                 for row in range(self.table.rowCount()):
-                    for column in range(self.table.columnCount() - 1):  # Omit the action column
+                    for column in range(self.table.columnCount() - 1):
                         item = self.table.item(row, column)
                         if item:
                             pdf.cell(col_width, 10, str(item.text()), 1)
@@ -604,7 +629,6 @@ class ResultPage(QWidget):
         path, _ = QFileDialog.getSaveFileName(self, "Save HTML", "", "HTML Files (*.html)")
         if path:
             with open(path, 'w') as file:
-                # Write HTML header with some basic styling
                 file.write("""
                 <html>
                 <head>
@@ -620,30 +644,27 @@ class ResultPage(QWidget):
                     <tr>
                 """)
                 
-                # Write table headers
-                for column in range(self.table.columnCount() - 1):  # Omit the action column
+                for column in range(self.table.columnCount() - 1):
                     header = self.table.horizontalHeaderItem(column)
                     if header:
                         file.write(f"<th>{header.text()}</th>\n")
                 file.write("</tr></thead>\n<tbody>\n")
                 
-                # Write data rows
                 for row in range(self.table.rowCount()):
                     file.write("<tr>\n")
-                    for column in range(self.table.columnCount() - 1):  # Omit the action column
+                    for column in range(self.table.columnCount() - 1):
                         item = self.table.item(row, column)
                         if item:
                             file.write(f"<td>{item.text()}</td>\n")
                     file.write("</tr>\n")
                 
-                # Close HTML tags
                 file.write("</tbody></table>\n</body></html>")
 
     def searchTable(self):
         query = self.searchBox.text().lower()
         for row in range(self.table.rowCount()):
             match = False
-            for column in range(self.table.columnCount() - 1):  # Omit the action column
+            for column in range(self.table.columnCount() - 1):
                 item = self.table.item(row, column)
                 if item and query in item.text().lower():
                     match = True

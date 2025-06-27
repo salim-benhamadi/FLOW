@@ -151,7 +151,6 @@ class RetrainingTab(QWidget):
         QTimer.singleShot(0, self.load_initial_data)
 
     def load_initial_data(self):
-        logger.debug("Starting initial data load")
         self.show_loading_state()
         self.load_reference_data()
 
@@ -222,7 +221,6 @@ class RetrainingTab(QWidget):
             worker_api_client = APIClient()
             data = await worker_api_client.get_reference_data_list()
             self.connection_status = "connected"
-            logger.debug(f"Loaded reference data: {len(data) if data else 0} records")
             return data if data else []
         except Exception as e:
             self.connection_status = "error"
@@ -238,9 +236,7 @@ class RetrainingTab(QWidget):
     def _update_reference_table(self, reference_data):
         try:
             self.reference_data = reference_data if reference_data else []
-            
-            logger.debug(f"Processing reference data: {len(self.reference_data)} records")
-            
+                        
             if self.connection_status == "error":
                 self.add_status_message("Backend Connection", "Failed - Working in offline mode")
                 self.show_connection_error_in_table()
@@ -402,7 +398,6 @@ class RetrainingTab(QWidget):
         dialog = EFFUploadDialog(self)
         if dialog.exec_():
             upload_data = dialog.get_data()
-            logger.debug("Upload data received: %s", upload_data)
             
             product = upload_data.get('product', '')
             lot = upload_data.get('lot', '')
@@ -440,7 +435,6 @@ class RetrainingTab(QWidget):
                 
                 self.current_worker.setParent(self)
                 self.current_worker.start()
-                logger.debug("New worker started")
                 
             except Exception as e:
                 logger.error("Error creating worker: %s", str(e))
@@ -524,7 +518,6 @@ class RetrainingTab(QWidget):
 
     def _cleanup_current_worker(self):
         if self.current_worker:
-            logger.debug("Cleaning up current worker")
             try:
                 if self.current_worker.isRunning():
                     self.current_worker.wait(3000)
@@ -543,7 +536,6 @@ class RetrainingTab(QWidget):
             worker_api_client = APIClient()
             processor = EFFProcessor(worker_api_client)
             
-            logger.debug(f"Processing EFF file: {file_path} (update_existing: {update_existing})")
             
             # Process the EFF file
             eff_data = await processor.process_eff_file(file_path, product, lot, insertion)
@@ -662,7 +654,6 @@ class RetrainingTab(QWidget):
                     self.current_worker.progress.emit(100, "VAMOS Analysis", 
                                                     f"Analysis error: {str(e)}")
             
-            logger.debug(f"Processing completed successfully")
             return eff_data
             
         except Exception as e:
@@ -672,7 +663,6 @@ class RetrainingTab(QWidget):
             if worker_api_client:
                 try:
                     await worker_api_client.close()
-                    logger.debug("Worker API client closed successfully")
                 except Exception as e:
                     logger.error(f"Error closing worker API client: {e}")
 
@@ -681,7 +671,6 @@ class RetrainingTab(QWidget):
         self.add_status_message(event, status)
 
     def _handle_upload_complete(self, result):
-        logger.debug("Upload completed with result: %s", result)
         self.addDataBtn.setEnabled(True)
         self.progressBar.hide()
         if result:
@@ -707,9 +696,7 @@ class RetrainingTab(QWidget):
         self.add_status_message(f"Error: {title}", "Failed")
         print(f"Error: {title}\n{message}")
 
-    def closeEvent(self, event):
-        logger.debug("Closing VAMOSRetrainingTab")
-        
+    def closeEvent(self, event):        
         self._cleanup_current_worker()
         
         for worker in self.workers[:]:
