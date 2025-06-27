@@ -5,12 +5,14 @@ from PySide6.QtGui import QFont, QIcon, QColor
 from PySide6.QtCore import Qt, QSize, Signal, QThread
 from ui.utils.PathResources import resource_path
 from ui.utils.Effio import EFF
+
 class LoadItemsWorker(QThread):
     finished = Signal(dict)
     
     def __init__(self, files):
         super().__init__()
         self.files = files
+        
     def run(self):
         VAMOS_TEST = {
             "VAMOS_PU": [6000, 6999],
@@ -63,16 +65,17 @@ class GroupListWidget(QListWidget):
 
 class SelectionPage(QWidget):
     show_upload_signal = Signal()
-    show_processing_signal = Signal(list, list)
+    show_processing_signal = Signal(list, list, dict)  # Added reference_config parameter
     
     def __init__(self):
         super().__init__()
         self.files = []
+        self.reference_config = {}  # Store reference configuration
         self.initUI()
 
     def initUI(self):
         self.setFixedWidth(480)
-        self.setMinimumHeight(700)  # Increased height for vertical layout
+        self.setMinimumHeight(700)
         self.setStyleSheet("background-color: white; color: black")
         
         mainLayout = QVBoxLayout(self)
@@ -173,7 +176,6 @@ class SelectionPage(QWidget):
         loadingLayout.addWidget(self.progressBar)
         self.loadingWidget.hide()
         
-
         # Available list section
         availableLabel = QLabel("Available Tests")
         availableLabel.setFont(QFont("Arial", 10, QFont.Bold))
@@ -379,7 +381,8 @@ class SelectionPage(QWidget):
     def process_selected(self):
         selected_items = self.get_selected_items()
         if selected_items:
-            self.show_processing_signal.emit(selected_items, self.files)
+            # Pass reference configuration along with selected items and files
+            self.show_processing_signal.emit(selected_items, self.files, self.reference_config)
 
     def go_back(self):
         self.show_upload_signal.emit()

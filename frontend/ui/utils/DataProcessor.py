@@ -1,6 +1,7 @@
 from PySide6.QtCore import Signal, QThread
 from ui.utils.Model import analyze_distribution_similarity
 from ui.utils.Effio import EFF
+from api.reference_data_client import ReferenceDataClient
 import pandas as pd
 import numpy as np
 import random
@@ -37,7 +38,7 @@ class DataProcessor(QThread):
     }
 
     def __init__(self, selected_items: Optional[List[str]] = None, files: List[str] = None, 
-                 sensitivity: float = 0.5, model_version: str = None):
+                 reference_config: Dict = None, sensitivity: float = 0.5, model_version: str = None):
         super().__init__()
         if not files:
             raise ValueError("Files cannot be empty")
@@ -57,10 +58,88 @@ class DataProcessor(QThread):
         self.model_version = model_version
         self.results = []
         self._processed_count = 0
+        
+        # Store reference configuration
+        self.reference_config = reference_config or {}
+        self.reference_client = ReferenceDataClient()
+        self.reference_data_cache = {}  # Cache for loaded reference data
 
     def set_sensitivity(self, sensitivity: float):
         self.sensitivity = np.clip(sensitivity, 0.0, 1.0)
     
+    def _load_reference_data(self, insertion: str) -> List[Tuple[pd.DataFrame, Dict]]:
+        """Load reference data based on configuration"""
+        reference_data = []
+        
+        try:
+            if self.reference_config.get("source") == "cloud":
+                # Load from cloud
+                cloud_selection = self.reference_config.get("cloud_selection", {})
+                
+                for product in cloud_selection.get("products", []):
+                    if product in cloud_selection.get("lots", {}):
+                        for insertion_name, lots in cloud_selection["lots"][product].items():
+                            if insertion_name == insertion:  # Match insertion
+                                for lot in lots:
+                                    # Get reference data from cloud
+                                    try:
+                                        df_ref = self.reference_client.get_reference_data_by_criteria(
+                                            product=product, 
+                                            lot=lot, 
+                                            insertion=insertion
+                                        )
+                                        if df_ref is not None and not df_ref.empty:
+                                            metadata = {
+                                                'product': product,
+                                                'lot': lot,
+                                                'insertion': insertion,
+                                                'source': 'cloud'
+                                            }
+                                            reference_data.append((df_ref, metadata))
+                                    except Exception as e:
+                                        logger.warning(f"Failed to load cloud reference data for {product}-{lot}-{insertion}: {e}")
+                
+            else:
+                # Load from local files
+                reference_files = self.reference_config.get("files", [])
+                
+                for ref_file in reference_files:
+                    try:
+                        # Check cache first
+                        if ref_file in self.reference_data_cache:
+                            df_ref, ref_metadata = self.reference_data_cache[ref_file]
+                        else:
+                            df_ref, _ = EFF.read(ref_file)
+                            df_info = EFF.get_value_rows(df_ref, header='<+ParameterName>')
+                            
+                            ref_metadata = {
+                                'product': "NA",  # Local files don't have product info
+                                'lot': df_info['Lot'].iloc[0] if not df_info.empty else "Unknown",
+                                'insertion': df_info['MeasStep'].iloc[0] if not df_info.empty else "Unknown",
+                                'source': 'local',
+                                'file_path': ref_file
+                            }
+                            
+                            # Cache the loaded data
+                            self.reference_data_cache[ref_file] = (df_ref, ref_metadata)
+                        
+                        # Check if insertion matches
+                        if ref_metadata['insertion'] == insertion:
+                            reference_data.append((df_ref, ref_metadata))
+                            
+                    except Exception as e:
+                        logger.warning(f"Failed to load local reference file {ref_file}: {e}")
+        
+        except Exception as e:
+            logger.error(f"Error loading reference data: {e}")
+        
+        if not reference_data:
+            logger.warning(f"No reference data found for insertion: {insertion}")
+        else:
+            logger.info(f"Loaded {len(reference_data)} reference datasets for insertion: {insertion}")
+            
+        return reference_data
+
     def _adjust_thresholds_by_sensitivity(self) -> dict:
         base_thresholds = {
             'cpk_threshold': 1.33,
@@ -233,184 +312,204 @@ class DataProcessor(QThread):
             lot_input = df_info_1['Lot'].iloc[0] if not df_info_1.empty else "Unknown"
             insertion_input = df_info_1['MeasStep'].iloc[0] if not df_info_1.empty else "Unknown"
 
-            reference_path = resource_path(f'resources/output/ZA407235G04_{insertion_input}.eff')
-            if not Path(reference_path).exists():
-                logger.warning(f"Reference file not found: {reference_path}")
+            # Load reference data based on configuration
+            reference_datasets = self._load_reference_data(insertion_input)
+            
+            if not reference_datasets:
+                logger.warning(f"No reference data found for insertion: {insertion_input}")
                 return None
 
-            df_reference, _ = EFF.read(reference_path)
+            all_results = []
             
-            df_info_2 = EFF.get_value_rows(df_reference, header='<+ParameterName>')
-            lot_reference = df_info_2['Lot'].iloc[0] if not df_info_2.empty else "Unknown"
-            insertion_reference = df_info_2['MeasStep'].iloc[0] if not df_info_2.empty else "Unknown"
-
-            df_new = analyze_distribution_similarity(
-                df_input, 
-                df_reference, 
-                self.selected_names, 
-                sensitivity=self.sensitivity,
-                model_version=self.model_version
-            )
-            
-            desc_rows = EFF.get_description_rows(df_input, header="<+ParameterName>")
-            
-            if self.selected_names is None:
-                available_tests = desc_rows.columns.tolist()
-            else:
-                available_tests = self.selected_names
-
-            current_selected_items = []
-            current_selected_numbers = []
-            
-            for test in available_tests:
-                if test in df_info_1.columns and test in df_info_2.columns:
-                    current_selected_items.append(test)
-                    test_number = desc_rows[test].loc['<+ParameterNumber>']
-                    current_selected_numbers.append(str(test_number))
-
-            columns = desc_rows[current_selected_items].loc['<+ParameterNumber>'].astype(str)
-            df_lsl1 = EFF.get_description_rows(df_input, header="<+ParameterName>").loc['<LIMIT:VALID:LOWER_VALUE>']
-            df_usl1 = EFF.get_description_rows(df_input, header="<+ParameterName>").loc['<LIMIT:VALID:UPPER_VALUE>']
-            df_lsl2 = EFF.get_description_rows(df_reference, header="<+ParameterName>").loc['<LIMIT:VALID:LOWER_VALUE>']
-            df_usl2 = EFF.get_description_rows(df_reference, header="<+ParameterName>").loc['<LIMIT:VALID:UPPER_VALUE>']
-            
-            def to_float_or_nan(arr):
-                return np.array([float(x) if str(x).strip() != '' else np.nan for x in arr])
-
-            lsl_input = to_float_or_nan(df_lsl1[current_selected_items].values)
-            usl_input = to_float_or_nan(df_usl1[current_selected_items].values)
-            lsl_reference = to_float_or_nan(df_lsl2[current_selected_items].values)
-            usl_reference = to_float_or_nan(df_usl2[current_selected_items].values)
-
-            TNUMBERS = list(columns)
-            
-            df_1 = EFF.get_value_rows(df_input, header='<+ParameterNumber>')[columns]
-        
-            df_2 = EFF.get_value_rows(df_reference, header='<+ParameterNumber>')[columns]
-            
-            sample_indices_1 = self._get_representative_sample(df_1)
-            sample_indices_2 = self._get_representative_sample(df_2)
-            
-            sampled_data_1 = df_1.iloc[sample_indices_1]
-            sampled_data_2 = df_2.iloc[sample_indices_2]
-            
-            percentiles_input = []
-            percentiles_reference = []
-            for i, column in enumerate(columns):
-                percentiles_input.append(self.calculate_percentiles(sampled_data_1[column]))
-                percentiles_reference.append(self.calculate_percentiles(sampled_data_2[column]))
-            
-            result_df = pd.DataFrame()
-            result_df["Test Name"] = current_selected_items
-            result_df["Test Number"] = [int(float(t.strip())) for t in TNUMBERS]
-            result_df["lot_reference"] = lot_reference
-            result_df["lot_input"] = lot_input
-            result_df["insertion_reference"] = insertion_reference
-            result_df["insertion_input"] = insertion_input
-            result_df["reference_id"] = [f"REF_AJAX_{lot_reference}_{insertion_reference}_{t.strip()}" for t in TNUMBERS]
-            result_df["input_id"] = [f"IN_AJAX_{lot_input}_{insertion_input}_{t.strip()}" for t in TNUMBERS]
-            result_df["Product"] = "AJAX"
-            result_df["input_file"] = input_file
-            
-            df_filtered = df_new.reindex(TNUMBERS)
-
-            result_df["Status"] = df_filtered["target"].values
-            result_df["ML_Confidence"] = df_filtered["confidence_score"].values.round(4)
-            result_df["Sensitivity_Level"] = df_filtered["sensitivity_level"].values
-            result_df["Model_Version"] = df_filtered.get("model_version", self.model_version).values
-            
-            df1_description = sampled_data_1.describe().round(8).T
-            result_df["Min"] = df1_description["min"].values.round(8)
-            result_df["Max"] = df1_description["max"].values.round(8)
-            result_df["Mean"] = df1_description["mean"].values.round(8)
-            result_df["Std"] = df1_description["std"].values.round(8)
-
-            for metric in ['p1', 'p5', 'p25', 'p75', 'p95', 'p99']:
-                result_df[f'{metric}_input'] = [p[metric] for p in percentiles_input]
-                result_df[f'{metric}_reference'] = [p[metric] for p in percentiles_reference]
-
-            result_df["LSL_input"] = lsl_input.round(8)
-            result_df["USL_input"] = usl_input.round(8)
-            result_df["LSL_reference"] = lsl_reference.round(8)
-            result_df["USL_reference"] = usl_reference.round(8)
-            result_df["Confidence"] = [0.95] * len(current_selected_items)
-
-            input_data_dict = {}
-            reference_data_dict = {}
-            
-            for i, (test_name, t_number) in enumerate(zip(current_selected_items, TNUMBERS)):
-                if t_number in sampled_data_1.columns:
-                    input_data_dict[test_name] = sampled_data_1[t_number].dropna().values.tolist()
-                else:
-                    input_data_dict[test_name] = []
-                    
-                if t_number in sampled_data_2.columns:
-                    reference_data_dict[test_name] = sampled_data_2[t_number].dropna().values.tolist()
-                else:
-                    reference_data_dict[test_name] = []
-
-            cpk_values = []
-            yield_values = []
-            yield_loss_values = []
-            rejection_rate_values = []
-
-            for test_name, t_number in zip(current_selected_items, TNUMBERS):
+            # Process against each reference dataset
+            for ref_idx, (df_reference, ref_metadata) in enumerate(reference_datasets):
                 try:
-                    if t_number not in sampled_data_1.columns:
-                        cpk_values.append(np.nan)
-                        yield_values.append(0)
-                        yield_loss_values.append(0)
-                        rejection_rate_values.append(0)
+                    df_info_2 = EFF.get_value_rows(df_reference, header='<+ParameterName>')
+                    lot_reference = ref_metadata['lot']
+                    insertion_reference = ref_metadata['insertion']
+                    product_reference = ref_metadata['product']
+
+                    # Analyze distribution similarity
+                    df_new = analyze_distribution_similarity(
+                        df_input, 
+                        df_reference, 
+                        self.selected_names, 
+                        sensitivity=self.sensitivity,
+                        model_version=self.model_version
+                    )
+                    
+                    desc_rows = EFF.get_description_rows(df_input, header="<+ParameterName>")
+                    
+                    if self.selected_names is None:
+                        available_tests = desc_rows.columns.tolist()
+                    else:
+                        available_tests = self.selected_names
+
+                    current_selected_items = []
+                    current_selected_numbers = []
+                    
+                    for test in available_tests:
+                        if test in df_info_1.columns and test in df_info_2.columns:
+                            current_selected_items.append(test)
+                            test_number = desc_rows[test].loc['<+ParameterNumber>']
+                            current_selected_numbers.append(str(test_number))
+
+                    if not current_selected_items:
+                        logger.warning(f"No common tests found between input and reference {ref_idx + 1}")
                         continue
 
-                    input_data = sampled_data_1[t_number].values
+                    columns = desc_rows[current_selected_items].loc['<+ParameterNumber>'].astype(str)
+                    df_lsl1 = EFF.get_description_rows(df_input, header="<+ParameterName>").loc['<LIMIT:VALID:LOWER_VALUE>']
+                    df_usl1 = EFF.get_description_rows(df_input, header="<+ParameterName>").loc['<LIMIT:VALID:UPPER_VALUE>']
+                    df_lsl2 = EFF.get_description_rows(df_reference, header="<+ParameterName>").loc['<LIMIT:VALID:LOWER_VALUE>']
+                    df_usl2 = EFF.get_description_rows(df_reference, header="<+ParameterName>").loc['<LIMIT:VALID:UPPER_VALUE>']
                     
-                    lsl_idx = list(columns).index(t_number) if t_number in columns else None
-                    usl_idx = list(columns).index(t_number) if t_number in columns else None
+                    def to_float_or_nan(arr):
+                        return np.array([float(x) if str(x).strip() != '' else np.nan for x in arr])
+
+                    lsl_input = to_float_or_nan(df_lsl1[current_selected_items].values)
+                    usl_input = to_float_or_nan(df_usl1[current_selected_items].values)
+                    lsl_reference = to_float_or_nan(df_lsl2[current_selected_items].values)
+                    usl_reference = to_float_or_nan(df_usl2[current_selected_items].values)
+
+                    TNUMBERS = list(columns)
                     
-                    lsl = lsl_reference[lsl_idx] if lsl_idx is not None else np.nan
-                    usl = usl_reference[usl_idx] if usl_idx is not None else np.nan
+                    df_1 = EFF.get_value_rows(df_input, header='<+ParameterNumber>')[columns]
+                    df_2 = EFF.get_value_rows(df_reference, header='<+ParameterNumber>')[columns]
+                    
+                    sample_indices_1 = self._get_representative_sample(df_1)
+                    sample_indices_2 = self._get_representative_sample(df_2)
+                    
+                    sampled_data_1 = df_1.iloc[sample_indices_1]
+                    sampled_data_2 = df_2.iloc[sample_indices_2]
+                    
+                    percentiles_input = []
+                    percentiles_reference = []
+                    for i, column in enumerate(columns):
+                        percentiles_input.append(self.calculate_percentiles(sampled_data_1[column]))
+                        percentiles_reference.append(self.calculate_percentiles(sampled_data_2[column]))
+                    
+                    result_df = pd.DataFrame()
+                    result_df["Test Name"] = current_selected_items
+                    result_df["Test Number"] = [int(float(t.strip())) for t in TNUMBERS]
+                    result_df["lot_reference"] = lot_reference
+                    result_df["lot_input"] = lot_input
+                    result_df["insertion_reference"] = insertion_reference
+                    result_df["insertion_input"] = insertion_input
+                    result_df["reference_id"] = [f"REF_{product_reference}_{lot_reference}_{insertion_reference}_{t.strip()}" for t in TNUMBERS]
+                    result_df["input_id"] = [f"IN_{product_reference}_{lot_input}_{insertion_input}_{t.strip()}" for t in TNUMBERS]
+                    result_df["Product"] = product_reference
+                    result_df["input_file"] = input_file
+                    result_df["reference_source"] = ref_metadata['source']
+                    result_df["reference_index"] = ref_idx + 1
+                    
+                    # Add reference file path for local files
+                    if ref_metadata['source'] == 'local':
+                        result_df["reference_file"] = ref_metadata.get('file_path', 'Unknown')
+                    
+                    df_filtered = df_new.reindex(TNUMBERS)
 
-                    cpk = self.calculate_cpk(input_data, lsl, usl)
-                    cpk_values.append(cpk)
+                    result_df["Status"] = df_filtered["target"].values
+                    result_df["ML_Confidence"] = df_filtered["confidence_score"].values.round(4)
+                    result_df["Sensitivity_Level"] = df_filtered["sensitivity_level"].values
+                    result_df["Model_Version"] = df_filtered.get("model_version", self.model_version).values
+                    
+                    df1_description = sampled_data_1.describe().round(8).T
+                    result_df["Min"] = df1_description["min"].values.round(8)
+                    result_df["Max"] = df1_description["max"].values.round(8)
+                    result_df["Mean"] = df1_description["mean"].values.round(8)
+                    result_df["Std"] = df1_description["std"].values.round(8)
 
-                    yield_rate, yield_loss, rejection_rate = self.calculate_yield_metrics(input_data, lsl, usl)
-                    yield_values.append(yield_rate)
-                    yield_loss_values.append(yield_loss)
-                    rejection_rate_values.append(rejection_rate)
+                    for metric in ['p1', 'p5', 'p25', 'p75', 'p95', 'p99']:
+                        result_df[f'{metric}_input'] = [p[metric] for p in percentiles_input]
+                        result_df[f'{metric}_reference'] = [p[metric] for p in percentiles_reference]
+
+                    result_df["LSL_input"] = lsl_input.round(8)
+                    result_df["USL_input"] = usl_input.round(8)
+                    result_df["LSL_reference"] = lsl_reference.round(8)
+                    result_df["USL_reference"] = usl_reference.round(8)
+                    result_df["Confidence"] = [0.95] * len(current_selected_items)
+
+                    input_data_dict = {}
+                    reference_data_dict = {}
+                    
+                    for i, (test_name, t_number) in enumerate(zip(current_selected_items, TNUMBERS)):
+                        if t_number in sampled_data_1.columns:
+                            input_data_dict[test_name] = sampled_data_1[t_number].dropna().values.tolist()
+                        else:
+                            input_data_dict[test_name] = []
+                            
+                        if t_number in sampled_data_2.columns:
+                            reference_data_dict[test_name] = sampled_data_2[t_number].dropna().values.tolist()
+                        else:
+                            reference_data_dict[test_name] = []
+
+                    cpk_values = []
+                    yield_values = []
+                    yield_loss_values = []
+                    rejection_rate_values = []
+
+                    for test_name, t_number in zip(current_selected_items, TNUMBERS):
+                        try:
+                            if t_number not in sampled_data_1.columns:
+                                cpk_values.append(np.nan)
+                                yield_values.append(0)
+                                yield_loss_values.append(0)
+                                rejection_rate_values.append(0)
+                                continue
+
+                            input_data = sampled_data_1[t_number].values
+                            
+                            lsl_idx = list(columns).index(t_number) if t_number in columns else None
+                            usl_idx = list(columns).index(t_number) if t_number in columns else None
+                            
+                            lsl = lsl_reference[lsl_idx] if lsl_idx is not None else np.nan
+                            usl = usl_reference[usl_idx] if usl_idx is not None else np.nan
+
+                            cpk = self.calculate_cpk(input_data, lsl, usl)
+                            cpk_values.append(cpk)
+
+                            yield_rate, yield_loss, rejection_rate = self.calculate_yield_metrics(input_data, lsl, usl)
+                            yield_values.append(yield_rate)
+                            yield_loss_values.append(yield_loss)
+                            rejection_rate_values.append(rejection_rate)
+                            
+                        except Exception as e:
+                            logger.error(f"Error processing test {t_number}: {str(e)}")
+                            cpk_values.append(np.nan)
+                            yield_values.append(0)
+                            yield_loss_values.append(0)
+                            rejection_rate_values.append(0)
+
+                    result_df["Cpk"] = cpk_values
+                    result_df["Yield"] = yield_values
+                    result_df["Yield_Loss"] = yield_loss_values
+                    result_df["Rejection_Rate"] = rejection_rate_values
+                    result_df["Module"] = result_df["Test Number"].map(self.get_module)
+                    
+                    result_df["input_data"] = result_df["Test Name"].map(input_data_dict)
+                    result_df["reference_data"] = result_df["Test Name"].map(reference_data_dict)
+                    result_df["measurements"] = result_df["input_data"]
+                    
+                    all_results.append(result_df)
+                    
+                    logger.info(f"Processed reference dataset {ref_idx + 1}/{len(reference_datasets)} from {ref_metadata['source']}")
                     
                 except Exception as e:
-                    logger.error(f"Error processing test {t_number}: {str(e)}")
-                    cpk_values.append(np.nan)
-                    yield_values.append(0)
-                    yield_loss_values.append(0)
-                    rejection_rate_values.append(0)
-
-            result_df["Cpk"] = cpk_values
-            result_df["Yield"] = yield_values
-            result_df["Yield_Loss"] = yield_loss_values
-            result_df["Rejection_Rate"] = rejection_rate_values
-            result_df["Module"] = result_df["Test Number"].map(self.get_module)
+                    logger.error(f"Error processing reference dataset {ref_idx + 1}: {str(e)}")
+                    continue
             
-            result_df["input_data"] = result_df["Test Name"].map(input_data_dict)
-            result_df["reference_data"] = result_df["Test Name"].map(reference_data_dict)
-            
-            result_df["measurements"] = result_df["input_data"]
-            
-            logger.info(f"Data mapping results:")
-            for idx, row in result_df.iterrows():
-                test_name = row["Test Name"]
-                has_input = test_name in input_data_dict and len(input_data_dict[test_name]) > 0
-                has_reference = test_name in reference_data_dict and len(reference_data_dict[test_name]) > 0
-                logger.info(f"  {test_name}: input_data={has_input}, reference_data={has_reference}")
-
-            status_counts = result_df["Status"].value_counts()
-            confidence_stats = result_df["ML_Confidence"].describe()
-            logger.info(f"ML Prediction Summary:")
-            logger.info(f"  Status distribution: {status_counts.to_dict()}")
-            logger.info(f"  Confidence stats: mean={confidence_stats['mean']:.3f}, min={confidence_stats['min']:.3f}, max={confidence_stats['max']:.3f}")
-
-            return result_df
+            # Combine all results if multiple reference datasets were processed
+            if all_results:
+                if len(all_results) == 1:
+                    return all_results[0]
+                else:
+                    combined_result = pd.concat(all_results, ignore_index=True)
+                    logger.info(f"Combined results from {len(all_results)} reference datasets")
+                    return combined_result
+            else:
+                logger.warning("No results generated from any reference dataset")
+                return None
 
         except Exception as e:
             logger.error(f"Error processing file {input_file}: {str(e)}")
@@ -424,6 +523,7 @@ class DataProcessor(QThread):
             successful_results = []
 
             logger.info(f"Starting processing of {total_files} files with ML model (sensitivity: {self.sensitivity}, model: {self.model_version})")
+            logger.info(f"Reference config: {self.reference_config}")
 
             for index, input_file in enumerate(self.files, 1):
                 try:
@@ -457,6 +557,11 @@ class DataProcessor(QThread):
                     logger.info(f"Overall ML Results:")
                     logger.info(f"  Status distribution: {overall_status_counts.to_dict()}")
                     logger.info(f"  Average confidence: {overall_confidence_stats['mean']:.3f}")
+                    
+                    # Log reference source distribution
+                    if 'reference_source' in combined_df.columns:
+                        source_counts = combined_df['reference_source'].value_counts()
+                        logger.info(f"Reference source distribution: {source_counts.to_dict()}")
                     
                     null_input = combined_df['input_data'].isna().sum()
                     null_reference = combined_df['reference_data'].isna().sum()

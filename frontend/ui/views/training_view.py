@@ -750,31 +750,6 @@ class RetrainingTab(QWidget):
         mainLayout.setContentsMargins(40, 40, 40, 40)
         mainLayout.setSpacing(15)
         
-        # Header
-        header_frame = QFrame()
-        header_frame.setStyleSheet("""
-            QFrame {
-                background-color: #f8f9fa;
-                border-radius: 8px;
-                padding: 20px;
-                border: 1px solid #e0e0e0;
-            }
-        """)
-        header_layout = QVBoxLayout(header_frame)
-        
-        title_label = QLabel("VAMOS Tool - Variance Analysis & Model Optimization")
-        title_label.setFont(QFont("Arial", 16, QFont.Bold))
-        title_label.setStyleSheet("color: #1849D6; border: none;")
-        
-        subtitle_label = QLabel(f"Current Model Version: v{self.version_manager.current_version}")
-        subtitle_label.setFont(QFont("Arial", 12))
-        subtitle_label.setStyleSheet("color: #666666; border: none;")
-        
-        header_layout.addWidget(title_label)
-        header_layout.addWidget(subtitle_label)
-        
-        mainLayout.addWidget(header_frame)
-        
         # Action buttons section
         buttonsLayout = QHBoxLayout()
         
@@ -1011,7 +986,7 @@ class EFFUploadDialog(QWidget):
     
     def initUI(self):
         self.setWindowTitle("Add Reference Data - VAMOS")
-        self.setFixedSize(500, 400)
+        self.setMinimumSize(500, 400)
         
         layout = QVBoxLayout(self)
         layout.setSpacing(15)
