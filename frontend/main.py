@@ -105,14 +105,14 @@ class AppMainWindow(QMainWindow):
     def show_reference_selection(self, file_paths: list):
         """Show reference selection page with uploaded files"""
         self.ReferenceSelectionPage.set_uploaded_files(file_paths)
-        self.setFixedWidth(530) 
+        self.setFixedWidth(500) 
         self.stack.setCurrentWidget(self.ReferenceSelectionPage)
     
     def show_selection(self, file_paths: list, reference_config: dict):
         """Show selection page with uploaded files and reference configuration"""
         self.SelectionPage.set_files(file_paths)
         self.SelectionPage.set_reference_config(reference_config) 
-        self.setFixedWidth(530)
+        self.setFixedWidth(500)
         self.stack.setCurrentWidget(self.SelectionPage)
         
         # Debug logging

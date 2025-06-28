@@ -29,7 +29,7 @@ class SettingsPage(QWidget):
         self.fetch_model_versions()
 
     def initUI(self):
-        self.setFixedWidth(530)
+        self.setFixedWidth(500)
         self.setMinimumHeight(600)
         self.setStyleSheet("background-color: white; color: black")
         

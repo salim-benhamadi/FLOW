@@ -62,7 +62,7 @@ class SelectionPage(QWidget):
         self.initUI()
 
     def initUI(self):
-        self.setFixedWidth(530)
+        self.setFixedWidth(500)
         self.setMinimumHeight(700)
         self.setStyleSheet("background-color: white; color: black")
         

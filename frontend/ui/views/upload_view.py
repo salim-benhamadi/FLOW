@@ -138,7 +138,7 @@ class UploadPage(QWidget):
         self.initUI()
 
     def initUI(self):
-        self.setFixedWidth(530)
+        self.setFixedWidth(500)
         self.setMinimumHeight(700)
         self.setAcceptDrops(True)
         
